@@ -75,17 +75,19 @@ python3 scripts/portfolio_status.py brain-template/portfolio.yaml
 |---|---|---|
 | `architect` | opus | options with trade-offs, ADRs, data models, contracts |
 | `developer` | sonnet | features and fixes, test-first, evidence from test runs |
-| `reviewer` | sonnet | fresh-context review; read-only |
-| `security` | sonnet | OWASP, secrets, dependencies, third-party repos; read-only |
+| `reviewer` | sonnet | fresh-context review; read-only (enforced by the hook) |
+| `security` | sonnet | OWASP, secrets, dependencies, third-party repos; read-only (enforced by the hook) |
 | `devops` | sonnet | deploys, CI/CD, monitoring, rollbacks |
 | `designer` | sonnet | UI, accessibility, responsive layouts |
-| `researcher` | sonnet | primary-source research with citations; read-only |
+| `researcher` | sonnet | primary-source research with citations; read-only (enforced by the hook) |
 
 Skills load on demand: `spec` (interview → spec), `test-plan`, `docs`, `project-init`.
 
 Always-on cost of the whole plugin: **~580 tokens per session** (`claude plugin details brain-core@brain-ai`); an agent or skill body loads only when it fires.
 
 The **secret guard** is a `PreToolUse` hook. It blocks writing literal secrets and known token shapes, reading `.env`/key files, copying them out and dumping the environment — and never echoes the value it caught. It runs at plugin level, so every agent gets it. It is a seat belt against honest mistakes, not the boundary: see [Security](#security).
+
+The same hook keeps `reviewer`, `security` and `researcher` read-only: inside those agents it blocks `Write`/`Edit`/`MultiEdit`/`NotebookEdit` and shell commands that change files, git state or dependencies (redirects into files, `rm`, `mv`, `cp`, `sed -i`, `git commit`/`push`/`reset`/…, `npm install`, `pip install`, …). Reading, `git diff`/`log`/`show`, running tests and audits stay allowed. It reads `agent_type` from the hook input, so it applies to subagents only.
 
 ## Repository layout
 

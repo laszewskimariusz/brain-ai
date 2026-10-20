@@ -30,3 +30,15 @@ def test_read_only_agents_cannot_write():
 def test_no_personas():
     for p in AGENTS.glob("*.md"):
         assert not re.search(r"(?i)\b(personality|persona|you are a (?:friendly|cheerful))\b", p.read_text()), p
+
+
+def test_hook_enforces_read_only_for_the_same_agents():
+    from test_protected_paths import sg
+    assert sg.READ_ONLY_AGENTS == READ_ONLY
+
+
+def test_readme_says_read_only_is_enforced():
+    readme = (PLUGIN.parents[1] / "README.md").read_text()
+    for name in READ_ONLY:
+        row = next(line for line in readme.splitlines() if line.startswith(f"| `{name}` |"))
+        assert "read-only (enforced by the hook)" in row, name

@@ -40,5 +40,5 @@ Layers: sandbox (OS) → `permissions.deny` → hook (seat belt). One list of pr
 
 1. **Bash sandbox** (`sandbox.enabled` in the kit): the operating system limits what shell commands can read, write and reach. `sandbox.filesystem.denyRead` hides the protected paths from every command and the processes it starts. It does not cover Claude's own file tools, MCP servers or hooks.
 2. **`permissions.deny`** in the kit: Claude's file tools cannot read the protected paths; no `env`/`printenv`.
-3. **The plugin's `PreToolUse` secret guard**: blocks literal secrets in writes, secret-file reads, copying secret files out and environment dumps. It parses commands with patterns, so a determined caller can get around it; it catches honest mistakes, the layers above hold the line.
+3. **The plugin's `PreToolUse` secret guard**: blocks literal secrets in writes, secret-file reads, copying secret files out and environment dumps. It parses commands with patterns, so a determined caller can get around it; it catches honest mistakes, the layers above hold the line. It also keeps the read-only agents (`reviewer`, `security`, `researcher`) from writing files or changing git state.
 4. **In CI**: tests, a private-pattern scan of the tree and history, and gitleaks.

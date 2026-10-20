@@ -239,6 +239,132 @@ def scan_bash(cmd, cwd=None):
     return None
 
 
+# --- read-only agents ----------------------------------------------------------------------
+
+# Agents whose prompts say "read-only". Plugin subagents report agent_type as "brain-core:<name>".
+READ_ONLY_AGENTS = {'reviewer', 'security', 'researcher'}
+_WRITE_TOOLS = ('Write', 'Edit', 'MultiEdit', 'NotebookEdit')
+_WRITE_CMDS = {'rm', 'rmdir', 'unlink', 'shred', 'mv', 'cp', 'install', 'ln', 'tee', 'truncate', 'dd',
+               'chmod', 'chown', 'chgrp'}
+_GIT_WRITE = {'commit', 'push', 'pull', 'reset', 'checkout', 'switch', 'merge', 'rebase', 'stash', 'tag', 'apply',
+              'am', 'cherry-pick', 'revert', 'restore', 'clean', 'add', 'rm', 'mv', 'worktree'}
+_GIT_OPTS_WITH_ARG = {'-C', '-c', '--git-dir', '--work-tree', '--namespace'}
+_PKG_WRITE = {'install', 'i', 'ci', 'add', 'remove', 'rm', 'uninstall', 'un', 'update', 'up', 'upgrade', 'link',
+              'publish', 'sync'}
+_PKG_TOOLS = {'npm', 'pnpm', 'yarn', 'bun', 'pip', 'pip3', 'uv', 'poetry'}
+_WRAPPERS = {'sudo', 'env', 'command', 'nice', 'nohup', 'time'}
+_SAFE_TARGETS = {'/dev/null', '/dev/stdout', '/dev/stderr'}
+_PUNCT = set(';|&()<>')
+
+
+def is_read_only_agent(agent):
+    if not isinstance(agent, str):
+        return False
+    return agent in READ_ONLY_AGENTS or (agent.startswith('brain-core:') and agent[11:] in READ_ONLY_AGENTS)
+
+
+def _shell_tokens(cmd):
+    lex = shlex.shlex(cmd.replace('\n', ';'), posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    try:
+        return list(lex)
+    except ValueError:
+        return cmd.split()
+
+
+def _strip_wrappers(words):
+    while words:
+        w = words[0]
+        if w in _WRAPPERS or re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', w):
+            words = words[1:]
+        elif w == 'timeout' and len(words) > 1:
+            words = words[2:]
+        else:
+            break
+    return words
+
+
+def _first_arg(args, with_value=()):
+    """First argument that is not an option (skipping the values of options that take one)."""
+    skip = False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in with_value:
+            skip = True
+        elif not a.startswith('-'):
+            return a
+    return None
+
+
+def _writing_command(words):
+    """What a single command would change, or None."""
+    words = _strip_wrappers(words)
+    if not words:
+        return None
+    cmd, args = words[0].rsplit('/', 1)[-1], words[1:]
+    if cmd in ('bash', 'sh', 'zsh', 'dash') and '-c' in args[:-1]:
+        return _writing_shell(args[args.index('-c') + 1])
+    if cmd == 'xargs':
+        rest = args
+        while rest and rest[0].startswith('-'):
+            rest = rest[2:] if rest[0] in ('-I', '-n', '-P', '-L', '-d', '-a', '-E', '-s') else rest[1:]
+        return _writing_command(rest)
+    if cmd in _WRITE_CMDS:
+        return f'run {cmd}'
+    if cmd == 'sed' and any(a.startswith('-i') or a == '--in-place' for a in args):
+        return 'edit files in place'
+    if cmd == 'perl' and any(re.match(r'^-\w*i', a) for a in args):
+        return 'edit files in place'
+    if cmd == 'find':
+        if any(a in ('-delete', '-fprint', '-fprintf', '-fls') for a in args):
+            return 'delete or write files with find'
+        for i, a in enumerate(args[:-1]):
+            if a in ('-exec', '-execdir', '-ok', '-okdir') and args[i + 1].rsplit('/', 1)[-1] in _WRITE_CMDS:
+                return f'run {args[i + 1]} through find'
+    if cmd == 'git':
+        sub = _first_arg(args, _GIT_OPTS_WITH_ARG)
+        if sub in _GIT_WRITE:
+            return f'run git {sub}'
+    if re.match(r'^python[0-9.]*$', cmd) and args[:2] == ['-m', 'pip']:
+        cmd, args = 'pip', args[2:]
+    if cmd in _PKG_TOOLS:
+        sub = _first_arg(args)
+        if cmd == 'uv' and sub == 'pip':
+            sub = _first_arg(args[args.index('pip') + 1:])
+        if sub in _PKG_WRITE or (cmd == 'yarn' and sub is None):
+            return f'change dependencies ({cmd} {sub or "install"})'
+    return None
+
+
+def _writing_shell(cmd):
+    tokens = _shell_tokens(cmd)
+    words = []
+    for i, t in enumerate(tokens):
+        if t and set(t) <= _PUNCT and '>' in t:
+            nxt = tokens[i + 1] if i + 1 < len(tokens) else ''
+            if not ((t.endswith('&') and re.match(r'^(?:\d+|-)$', nxt)) or nxt in _SAFE_TARGETS):
+                return 'redirect output into a file'
+            continue
+        if t and set(t) <= _PUNCT:
+            reason = _writing_command(words)
+            if reason:
+                return reason
+            words = []
+        elif t != '$':
+            words.append(t)
+    return _writing_command(words)
+
+
+def check_read_only(tool, ti):
+    if tool in _WRITE_TOOLS:
+        return f'{tool} is not available to a read-only agent'
+    if tool == 'Bash' and isinstance(ti.get('command'), str):
+        what = _writing_shell(ti['command'])
+        return f'a read-only agent cannot {what}' if what else None
+    return None
+
+
 # --- dispatch ------------------------------------------------------------------------------
 
 def check(tool, ti, cwd=None):
@@ -265,7 +391,14 @@ def main():
         if not isinstance(ti, dict):
             return 0
         cwd = data.get('cwd') if isinstance(data.get('cwd'), str) else None
-        reason = check(data.get('tool_name') or '', ti, cwd)
+        tool = data.get('tool_name') or ''
+        reason = check(tool, ti, cwd)
+        if not reason and is_read_only_agent(data.get('agent_type')):
+            reason = check_read_only(tool, ti)
+            if reason:
+                print(f'BLOCKED: blocked by secret_guard (brain-core): {reason} (read-only role). '
+                      'Report the change you would make; the developer agent applies it.', file=sys.stderr)
+                return 2
     except Exception:
         return 0
     if reason:
