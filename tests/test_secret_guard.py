@@ -142,9 +142,86 @@ def test_allows_shell_that_does_not_print_secret_files():
 
 
 def test_still_blocks_printing_key_files():
-    for cmd in ["cat certs/server.pem", "cat tls.key", "declare -p"]:
+    # *.key files are judged by content: see test_protected_paths
+    for cmd in ["cat certs/server.pem", "declare -p"]:
         assert blocks(ev("Bash", command=cmd)), cmd
 
 
 def test_sed_that_prints_a_secret_file_is_still_blocked():
     assert blocks(ev("Bash", command="sed -n p .env"))
+
+
+# --- error handling (v4.0.1) --------------------------------------------------------------
+
+def _main_in_process(monkeypatch, capsys, payload, **patches):
+    import importlib.util
+    import io
+    spec = importlib.util.spec_from_file_location("secret_guard_t4", HOOK)
+    sg = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sg)
+    for name, fn in patches.items():
+        monkeypatch.setattr(sg, name, fn)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(payload))
+    code = sg.main()
+    return code, capsys.readouterr().err
+
+
+def _boom(*_a, **_k):
+    raise RuntimeError("scanner bug")
+
+
+def test_scanner_exception_on_a_known_tool_fails_closed(monkeypatch, capsys):
+    cases = [(ev("Write", file_path="/repo/a.py", content="x"), {"scan_content": _boom}),
+             (ev("Read", file_path="/repo/a.py"), {"is_secret_path": _boom}),
+             (ev("Bash", command="ls"), {"scan_bash": _boom})]
+    for payload, patches in cases:
+        code, err = _main_in_process(monkeypatch, capsys, payload, **patches)
+        assert code == 2 and "internal error, failing closed" in err and "Traceback" not in err, payload
+        assert "scanner bug" not in err
+
+
+def test_unreadable_input_passes_with_a_short_warning():
+    for payload in ["", "not json", "[1, 2]", json.dumps({"tool_input": {}})]:
+        code, err = run(payload)
+        assert code == 0 and "Traceback" not in err and "secret_guard" in err and len(err) < 200, payload
+
+
+def test_blocks_more_url_credential_shapes():
+    for url in ["redis://:" + FAKE + "@cache.example.com:6379", "mongodb+srv://app:" + FAKE + "@cluster0.example.net/db"]:
+        assert blocks(ev("Write", file_path="/repo/config.ts", content=f'url = "{url}"')), url[:12]
+
+
+def test_url_without_credentials_still_passes():
+    for c in ["redis://cache.example.com:6379", "mongodb+srv://cluster0.example.net/db", "url = 'redis://:${REDIS_PASS}@cache'"]:
+        assert run(ev("Write", file_path="/repo/config.ts", content=c))[0] == 0, c
+
+
+# --- security review of v4.0.1 ------------------------------------------------------------
+
+def test_scanning_large_content_is_fast_enough_for_the_hook_timeout():
+    import time
+    for content in ["ab_" * 40000, "a_" * 60000, "x" * 300000, ("word " * 20000) + f"{KEYNAME}={FAKE}"]:
+        t = time.monotonic()
+        code, _ = run(ev("Write", file_path="/repo/big.txt", content=content))
+        assert time.monotonic() - t < 2.0, len(content)
+    # a secret after a long run is still found
+    assert blocks(ev("Write", file_path="/repo/big.txt", content="ab_" * 40000 + f"\n{KEYNAME}={FAKE}"))
+
+
+def test_deeply_nested_input_does_not_crash_the_hook():
+    code, err = run("[" * 200000)
+    assert code == 0 and "Traceback" not in err
+
+
+def test_key_sniff_does_not_hang_on_a_fifo(tmp_path):
+    import time
+    os.mkfifo(tmp_path / "x.key")
+    t = time.monotonic()
+    run(ev("Read", file_path=str(tmp_path / "x.key")))
+    assert time.monotonic() - t < 2.0
+
+
+def test_key_marker_after_the_first_4k_is_still_found(tmp_path):
+    key = tmp_path / "big.key"
+    key.write_text("# comment\n" * 600 + "-----BEGIN " + "PRIVATE KEY-----\n")
+    assert blocks(ev("Read", file_path=str(key)))

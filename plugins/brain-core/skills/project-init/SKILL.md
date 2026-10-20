@@ -66,7 +66,11 @@ description: Set up a project repo for the brain-ai workflow — a short CLAUDE.
 {
   "extraKnownMarketplaces": {
     "brain-ai": {
-      "source": { "source": "github", "repo": "laszewskimariusz/brain-ai" }
+      "source": {
+        "source": "github",
+        "repo": "laszewskimariusz/brain-ai",
+        "ref": "v4.0.1"
+      }
     }
   },
   "enabledPlugins": {
@@ -75,12 +79,64 @@ description: Set up a project repo for the brain-ai workflow — a short CLAUDE.
   "permissions": {
     "deny": [
       "Read(**/.env)",
+      "Read(**/.env.local)",
+      "Read(**/.env.development)",
+      "Read(**/.env.dev)",
+      "Read(**/.env.production)",
+      "Read(**/.env.prod)",
+      "Read(**/.env.staging)",
+      "Read(**/.env.stage)",
+      "Read(**/.env.test)",
+      "Read(**/.env.ci)",
+      "Read(**/.env.preview)",
       "Read(**/.env.*.local)",
       "Read(**/.secrets)",
+      "Read(**/.secrets.*)",
       "Read(**/*.pem)",
+      "Read(**/*.p12)",
+      "Read(**/*.pfx)",
+      "Read(**/id_rsa)",
+      "Read(**/id_ed25519)",
+      "Read(**/id_ecdsa)",
+      "Read(**/id_dsa)",
+      "Read(~/.ssh/**)",
+      "Read(**/.netrc)",
+      "Read(**/.pgpass)",
+      "Read(**/.git-credentials)",
+      "Read(~/.aws/credentials)",
       "Bash(env)",
       "Bash(printenv*)"
     ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "filesystem": {
+      "denyRead": [
+        "./**/.env",
+        "./**/.env.local",
+        "./**/.env.development",
+        "./**/.env.dev",
+        "./**/.env.production",
+        "./**/.env.prod",
+        "./**/.env.staging",
+        "./**/.env.stage",
+        "./**/.env.test",
+        "./**/.env.ci",
+        "./**/.env.preview",
+        "./**/.env.*.local",
+        "./**/.secrets",
+        "./**/.secrets.*",
+        "./**/*.pem",
+        "./**/*.p12",
+        "./**/*.pfx",
+        "./**/id_rsa",
+        "./**/id_ed25519",
+        "./**/id_ecdsa",
+        "./**/id_dsa",
+        "~/.ssh"
+      ]
+    },
+    "autoAllowBashIfSandboxed": false
   }
 }
 ```

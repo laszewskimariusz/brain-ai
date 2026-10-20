@@ -14,7 +14,10 @@ def test_project_kit_settings_enable_existing_plugin():
     (key,) = cfg["enabledPlugins"]
     plugin, market = key.split("@")
     assert market == mp["name"] and plugin in {p["name"] for p in mp["plugins"]}
-    assert cfg["extraKnownMarketplaces"][market]["source"] == {"source": "github", "repo": "laszewskimariusz/brain-ai"}
+    version = json.loads((PLUGIN / ".claude-plugin/plugin.json").read_text())["version"]
+    # projects pin the release they were set up with; the ref follows plugin.json
+    assert cfg["extraKnownMarketplaces"][market]["source"] == {
+        "source": "github", "repo": "laszewskimariusz/brain-ai", "ref": f"v{version}"}
 
 
 def test_project_kit_matches_project_init_template():
@@ -42,3 +45,15 @@ def test_portfolio_entries_have_required_fields():
     for p in projects:
         assert {"slug", "name", "stage", "repo"} <= p.keys(), p
         assert p["stage"] in stages, p
+
+
+def test_project_kit_turns_the_bash_sandbox_on():
+    cfg = json.loads((KIT / ".claude/settings.json").read_text())
+    assert cfg["sandbox"]["enabled"] is True
+    assert cfg["sandbox"]["filesystem"]["denyRead"]
+
+
+def test_sandbox_does_not_silently_auto_approve_bash():
+    cfg = json.loads((KIT / ".claude/settings.json").read_text())
+    # turning the sandbox on must not change who approves commands
+    assert cfg["sandbox"]["autoAllowBashIfSandboxed"] is False

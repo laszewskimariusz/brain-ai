@@ -33,6 +33,13 @@ copy; git tag base; echo placeholder-street > src/new.txt; git add -A; git -c us
 copy; expect fail "missing GUARD_HISTORY_SINCE ref is an error, not a silent pass" "$P" GUARD_HISTORY_SINCE=no-such-tag
 copy; mkdir -p docs/superpowers; echo placeholder-street > docs/superpowers/note.md; git add -A
       expect fail "docs/superpowers is scanned too" "$P"
+copy; echo placeholder-street > src/x.txt; git add -A; git -c user.name=t -c user.email=t@t commit -qm plant; git rm -q src/x.txt; : > HEAD; git add HEAD; git -c user.name=t -c user.email=t@t commit -qm "revert, add a file named HEAD"
+      expect fail "a file named HEAD does not switch the history scan off" "$P"
+copy; echo 'Placeholder-Street 1' > src/x.txt; git add -A
+      out=$(env "$P" GUARD_SKIP_GITLEAKS=1 bash scripts/guard.sh 2>&1)
+      if echo "$out" | grep -qi 'placeholder-street'; then echo "FAIL - report prints the matched text"; fail=1
+      elif echo "$out" | grep -q 'src/x.txt'; then echo "ok   - report names the file, not the matched text"
+      else echo "FAIL - report does not name the file"; fail=1; fi
 if [ -f "$SRC/.guard-private" ]; then
   copy; cp "$SRC/.guard-private" .
   expect pass "current tree is clean against the real private patterns"

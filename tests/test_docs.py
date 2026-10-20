@@ -34,8 +34,29 @@ def test_changelog_has_v4_entry():
     assert re.search(r"^## \[4\.0\.0\] — \d{4}-\d{2}-\d{2}", (ROOT / "CHANGELOG.md").read_text(), re.M)
 
 
-def test_docs_do_not_promise_per_project_pinning_the_kit_does_not_do():
-    # project-kit settings carry no ref, so docs must not claim projects pin a release
-    claim = re.compile(r"(?i)pinned per project|pins a release|pinned version|pin a release|pinned plugin")
-    for d in DOCS:
-        assert not claim.search((ROOT / d).read_text()), d
+def test_readme_explains_pinning_and_how_to_update():
+    t = (ROOT / "README.md").read_text()
+    assert re.search(r"(?i)pins? (?:the|a) release", t)
+    update = t.split("## Updating", 1)[1].split("\n## ", 1)[0]
+    for step in ("plugin.json", "CHANGELOG", "tag", "ref"):
+        assert step in update, step
+    # changing ref and running "marketplace update" fails (checked on Claude Code 2.1.286); re-add at the tag
+    assert "/plugin marketplace add laszewskimariusz/brain-ai@v" in update
+    assert "marketplace update" not in update
+
+
+def test_changelog_has_the_current_release_with_sections(load_json):
+    version = load_json("plugins/brain-core/.claude-plugin/plugin.json")["version"]
+    t = (ROOT / "CHANGELOG.md").read_text()
+    m = re.search(rf"^## \[{re.escape(version)}\] — \d{{4}}-\d{{2}}-\d{{2}}\n(.*?)(?=^## \[)", t, re.M | re.S)
+    assert m, version
+    for section in ("### Security", "### Fixed", "### Changed"):
+        assert section in m.group(1), section
+
+
+def test_readme_explains_the_sandbox_approval_settings_and_hook_limits():
+    t = (ROOT / "README.md").read_text()
+    for key in ("autoAllowBashIfSandboxed", "allowUnsandboxedCommands", "failIfUnavailable"):
+        assert key in t, key
+    limits = t.split("## Limits", 1)[1]
+    assert "agent_type" in limits and "matcher" in limits

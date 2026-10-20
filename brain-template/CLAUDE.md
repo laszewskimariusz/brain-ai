@@ -5,7 +5,7 @@ Projects live in their own repos with a project kit (`CLAUDE.md` + `.claude/sett
 Agents and skills come from the `brain-core` plugin, not from this repo.
 
 ## Where to look
-1. `portfolio.yaml` — every project: repo, working copy, stage, deploy. Status: `python3 scripts/portfolio_status.py portfolio.yaml`.
+1. `portfolio.yaml` — every project: repo, working copy, stage, deploy. Status, from a clone of brain-ai: `python3 <brain-ai>/scripts/portfolio_status.py portfolio.yaml`.
 2. `infra/` — hosts, services, ports, owners. Key names only, never secret values.
 3. `decisions/` — ADRs (CONTEXT / DECISION / REASON / CONSEQUENCE).
 4. `knowledge/` — research notes, dated `YYYY-MM-DD-topic.md`.

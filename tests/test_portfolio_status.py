@@ -38,3 +38,92 @@ def test_main_prints_table(capsys, tmp_path):
     assert ps.main([str(f)]) == 0
     out = capsys.readouterr().out
     assert "a" in out and "idea" in out and "no-repo" in out
+
+
+# --- v4.0.1 -------------------------------------------------------------------------------
+
+def test_git_never_prompts(monkeypatch):
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen.update(kw.get("env") or {})
+        raise OSError("stop")
+    monkeypatch.setattr(ps.subprocess, "run", fake_run)
+    assert ps.check_repo("git@example.com:a/b.git") == "unreachable"
+    assert seen.get("GIT_TERMINAL_PROMPT") == "0"
+    assert "BatchMode=yes" in seen.get("GIT_SSH_COMMAND", "")
+
+
+def test_head_not_allowed_falls_back_to_get():
+    import http.server
+    import threading
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_HEAD(self):
+            self.send_response(405)
+            self.end_headers()
+
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        assert ps.check_http(f"http://127.0.0.1:{srv.server_port}/") == "200"
+    finally:
+        srv.shutdown()
+
+
+def test_entry_that_is_not_a_mapping_becomes_an_invalid_row():
+    rows = ps.rows(["just-a-string", {"slug": "a", "stage": "idea"}], repo_check=str, http_check=str)
+    assert rows[0] == ("?", "invalid", "-", "-")
+    assert rows[1] == ("a", "idea", "-", "-")
+
+
+def test_checks_run_in_parallel_with_an_overall_deadline():
+    import time
+
+    def slow(_):
+        time.sleep(0.4)
+        return "ok"
+    projects = [{"slug": f"p{i}", "stage": "live", "repo": "r", "url": "u"} for i in range(6)]
+    t = time.monotonic()
+    rows = ps.rows(projects, repo_check=slow, http_check=slow)
+    assert time.monotonic() - t < 2.0 and all(r[2:] == ("ok", "ok") for r in rows)
+
+    def stuck(_):
+        time.sleep(3)
+        return "late"
+    t = time.monotonic()
+    rows = ps.rows(projects[:2], repo_check=stuck, http_check=stuck, deadline=0.5)
+    assert time.monotonic() - t < 2.0 and all(r[2:] == ("timeout", "timeout") for r in rows)
+
+
+def test_brain_template_says_where_the_status_script_lives():
+    t = (ROOT / "brain-template/CLAUDE.md").read_text()
+    assert "from a clone of brain-ai" in t
+    assert "pip install pyyaml" in (ROOT / "README.md").read_text()
+
+
+def test_repo_and_url_values_cannot_inject_options_or_schemes(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(ps.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    for bad in ["--upload-pack=touch " + str(tmp_path / "pwned"), "-oProxyCommand=x", "ext::sh -c x"]:
+        assert ps.check_repo(bad) == "invalid"
+    assert calls == []
+    for bad in ["file:///etc/hostname", "ftp://example.com/x", "gopher://x"]:
+        assert ps.check_http(bad) == "invalid"
+
+
+def test_git_gets_an_end_of_options_marker(monkeypatch):
+    seen = []
+
+    class R:
+        returncode, stdout = 0, "a1b2c3d4e5\tHEAD\n"
+    monkeypatch.setattr(ps.subprocess, "run", lambda cmd, **kw: seen.append(cmd) or R())
+    assert ps.check_repo("https://example.com/a.git") == "a1b2c3d"
+    assert seen[0][:3] == ["git", "ls-remote", "--"]
