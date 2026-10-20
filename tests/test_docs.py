@@ -40,3 +40,12 @@ def test_readme_explains_pinning_and_how_to_update():
     update = t.split("## Updating", 1)[1].split("\n## ", 1)[0]
     for step in ("plugin.json", "CHANGELOG", "tag", "ref"):
         assert step in update, step
+
+
+def test_changelog_has_the_current_release_with_sections(load_json):
+    version = load_json("plugins/brain-core/.claude-plugin/plugin.json")["version"]
+    t = (ROOT / "CHANGELOG.md").read_text()
+    m = re.search(rf"^## \[{re.escape(version)}\] — \d{{4}}-\d{{2}}-\d{{2}}\n(.*?)(?=^## \[)", t, re.M | re.S)
+    assert m, version
+    for section in ("### Security", "### Fixed", "### Changed"):
+        assert section in m.group(1), section

@@ -2,6 +2,28 @@
 
 All notable changes to brain-ai are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [4.0.1] — 2026-10-20
+
+Security hardening.
+
+### Security
+- The project kit turns the Bash sandbox on (`sandbox.enabled`) and hides the protected paths from shell commands with `sandbox.filesystem.denyRead`.
+- One list of protected paths in the secret guard (`PROTECTED`) feeds the hook, the kit's `permissions.deny` and the sandbox; tests keep them in sync. `.env.production` and the other common stages, `.secrets.*`, `*.p12`, `*.pfx`, SSH keys and `~/.ssh` are now denied in every layer.
+- `reviewer`, `security` and `researcher` are read-only by enforcement: the hook blocks file-writing tools and shell commands that change files, git state or dependencies inside those agents (`agent_type`).
+- The guard blocks copying secret files out (`cp` source, `scp`, `rsync`, `curl @file`, `tar`, …) and feeding them with `<`.
+- An internal error while checking a covered tool now blocks (fails closed) instead of passing.
+
+### Fixed
+- False positives: `src/.env.ts` and other code files, and `*.key` files without a private key (such as `i18n/messages.key`), are no longer blocked.
+- Password-in-URL detection also covers an empty user (`redis://:pw@host`) and `mongodb+srv://`.
+- Unreadable hook input passes with a one-line warning instead of silently.
+- `portfolio_status.py`: git never prompts for credentials, `HEAD` answered with 405/501 is retried with `GET`, a portfolio entry that is not a mapping becomes an `invalid` row, checks run in parallel under one overall deadline.
+
+### Changed
+- The kit pins the release: `extraKnownMarketplaces.brain-ai.source.ref` is `v4.0.1`. README documents how to update.
+- CI validates both manifests and installs the plugin from the checkout in a clean `HOME`; Claude Code and `gitleaks-action` are pinned.
+- Docs describe the layers as sandbox (OS) → `permissions.deny` → hook (seat belt).
+
 ## [4.0.0] — 2026-10-20
 
 Rewrite based on 60 days of usage data. See [docs/why-v4.md](docs/why-v4.md).
