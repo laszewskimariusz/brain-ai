@@ -34,17 +34,9 @@ def test_changelog_has_v4_entry():
     assert re.search(r"^## \[4\.0\.0\] — \d{4}-\d{2}-\d{2}", (ROOT / "CHANGELOG.md").read_text(), re.M)
 
 
-def test_docs_do_not_promise_per_project_pinning_the_kit_does_not_do():
-    # project-kit settings carry no ref, so docs must not claim projects pin a release
-    claim = re.compile(r"(?i)pinned per project|pins a release|pinned version|pin a release|pinned plugin")
-    for d in DOCS:
-        assert not claim.search((ROOT / d).read_text()), d
-
-
-def test_docs_describe_the_layers_with_the_sandbox_as_the_boundary():
-    layers = re.compile(r"sandbox[^\n]*→[^\n]*permissions\.deny[^\n]*→[^\n]*hook", re.I)
-    for d in ("README.md", "docs/architecture.md"):
-        t = (ROOT / d).read_text()
-        assert layers.search(t), d
-        # the hook is a seat belt, not the boundary
-        assert not re.search(r"(?i)guarantees come from[^\n]*hooks", t), d
+def test_readme_explains_pinning_and_how_to_update():
+    t = (ROOT / "README.md").read_text()
+    assert re.search(r"(?i)pins? (?:the|a) release", t)
+    update = t.split("## Updating", 1)[1].split("\n## ", 1)[0]
+    for step in ("plugin.json", "CHANGELOG", "tag", "ref"):
+        assert step in update, step

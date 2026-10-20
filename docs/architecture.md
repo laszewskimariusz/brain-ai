@@ -31,7 +31,7 @@ sequenceDiagram
 ## Why the split
 
 - **Context stays small.** A project session loads that project's `CLAUDE.md` and the plugin's skill descriptions — not the whole brain.
-- **One source of truth for agents.** Updating an agent means releasing a new plugin version (`plugin.json` + changelog); every project picks it up from the same marketplace instead of carrying its own copy.
+- **One source of truth for agents.** Updating an agent means releasing a new plugin version (`plugin.json` + changelog); every project moves to it by bumping one `ref` instead of carrying its own copy.
 - **Heavy work does not starve the coordinator.** Builds and fan-out run on the build machine.
 
 ## Guards

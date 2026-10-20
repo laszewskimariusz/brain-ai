@@ -3,7 +3,8 @@
     "brain-ai": {
       "source": {
         "source": "github",
-        "repo": "laszewskimariusz/brain-ai"
+        "repo": "laszewskimariusz/brain-ai",
+        "ref": "v4.0.1"
       }
     }
   },

@@ -68,7 +68,8 @@ description: Set up a project repo for the brain-ai workflow — a short CLAUDE.
     "brain-ai": {
       "source": {
         "source": "github",
-        "repo": "laszewskimariusz/brain-ai"
+        "repo": "laszewskimariusz/brain-ai",
+        "ref": "v4.0.1"
       }
     }
   },

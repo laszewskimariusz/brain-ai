@@ -13,7 +13,7 @@ def test_marketplace_lists_brain_core_with_relative_source(load_json):
 
 def test_plugin_json_version_and_hook(load_json):
     pj = load_json("plugins/brain-core/.claude-plugin/plugin.json")
-    assert pj["name"] == "brain-core" and pj["version"] == "4.0.0"
+    assert pj["name"] == "brain-core" and pj["version"] == "4.0.1"
     hooks = pj["hooks"]["PreToolUse"]
     commands = [h["command"] for entry in hooks for h in entry["hooks"]]
     assert any("${CLAUDE_PLUGIN_ROOT}/hooks/secret_guard.py" in c for c in commands)

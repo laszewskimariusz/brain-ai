@@ -1,7 +1,7 @@
 {
   "name": "brain-core",
   "description": "Role agents (architect, developer, reviewer, security, devops, designer, researcher), skills (spec, test-plan, docs, project-init) and a PreToolUse secret guard.",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "author": { "name": "Mariusz Laszewski" },
   "license": "Apache-2.0",
   "hooks": {

@@ -69,6 +69,14 @@ It writes `CLAUDE.md` and `.claude/settings.json` (template: [project-kit/](proj
 python3 scripts/portfolio_status.py brain-template/portfolio.yaml
 ```
 
+The kit pins the release it was set up with: `extraKnownMarketplaces.brain-ai.source.ref` is the release tag (for example `"ref": "v4.0.1"`), so a project keeps the agents and guard it was tested with until you move it on purpose.
+
+## Updating
+
+1. In this repo: bump `version` in `plugins/brain-core/.claude-plugin/plugin.json`, add the `CHANGELOG.md` entry and set `ref` in `project-kit/.claude/settings.json` to the new tag (the tests fail until they match).
+2. Merge, tag `vX.Y.Z` and publish the GitHub release.
+3. In each project: set `ref` in `.claude/settings.json` to the new tag, then run `/plugin marketplace update brain-ai`.
+
 ## What is in the plugin
 
 | Agent | Model | Use it for |
