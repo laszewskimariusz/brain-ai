@@ -309,9 +309,17 @@ def scan_bash(cmd, cwd=None):
 READ_ONLY_AGENTS = {'reviewer', 'security', 'researcher'}
 _WRITE_TOOLS = ('Write', 'Edit', 'MultiEdit', 'NotebookEdit')
 _WRITE_CMDS = {'rm', 'rmdir', 'unlink', 'shred', 'mv', 'cp', 'install', 'ln', 'truncate', 'dd', 'touch', 'mkdir',
-               'mkfifo', 'mknod', 'chmod', 'chown', 'chgrp'}
+               'mkfifo', 'mknod', 'chmod', 'chown', 'chgrp', 'patch', 'sponge'}
+# Write unless a listing or test flag is given: gzip -l, unzip -l, ...
+_ARCHIVERS = {'gzip': {'-l', '--list', '-t', '--test', '-c', '--stdout'}, 'gunzip': {'-l', '--list', '-t', '--test', '-c'},
+              'bzip2': {'-t', '-c'}, 'bunzip2': {'-t', '-c'}, 'xz': {'-l', '--list', '-t', '-c'}, 'unxz': {'-t', '-c'},
+              'zstd': {'-l', '-t', '-c'}, 'unzip': {'-l', '-t', '-Z', '-v'}}
 _GIT_WRITE = {'commit', 'push', 'pull', 'reset', 'checkout', 'switch', 'merge', 'rebase', 'apply', 'am',
-              'cherry-pick', 'revert', 'restore', 'clean', 'add', 'rm', 'mv'}
+              'cherry-pick', 'revert', 'restore', 'clean', 'add', 'rm', 'mv', 'clone', 'init', 'gc', 'prune',
+              'repack', 'update-ref', 'update-index', 'symbolic-ref', 'replace', 'filter-branch'}
+# Shell keywords in front of a command: if rm x; then rm y; fi
+_KEYWORDS = {'if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'while', 'until', '!', '{', '}'}
+_SUBSTITUTION = re.compile(r'\$\(([^()]*)\)|`([^`]*)`')
 _GIT_OPTS_WITH_ARG = {'-C', '-c', '--git-dir', '--work-tree', '--namespace'}
 _PKG_WRITE = {'install', 'i', 'ci', 'add', 'remove', 'rm', 'uninstall', 'un', 'update', 'up', 'upgrade', 'link',
               'publish', 'sync'}
@@ -369,7 +377,7 @@ def _strip_wrappers(words):
     while words:
         w = words[0]
         name = w.rsplit('/', 1)[-1]
-        if re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', w):
+        if re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', w) or w in _KEYWORDS:
             words = words[1:]
             continue
         if name not in _WRAPPERS:
@@ -419,6 +427,12 @@ def _git_write(sub, rest):
         return bool(flags & {'-d', '-D', '--delete', '-m', '-M', '--move', '-c', '-C', '--copy', '-u',
                              '--set-upstream-to', '--unset-upstream', '--edit-description', '-f', '--force'}) \
             or bool(pos and not listing)
+    if sub == 'remote':
+        return bool(pos) and pos[0] not in ('show', 'get-url')
+    if sub == 'submodule':
+        return bool(pos) and pos[0] not in ('status', 'summary')
+    if sub == 'notes':
+        return bool(pos) and pos[0] not in ('list', 'show')
     if sub == 'config':
         if pos and pos[0] in ('set', 'unset', 'rename-section', 'remove-section', 'edit'):
             return True
@@ -450,8 +464,16 @@ def _writing_command(words):
     if not words:
         return None
     cmd, args = words[0].rsplit('/', 1)[-1], words[1:]
-    if cmd in ('bash', 'sh', 'zsh', 'dash') and '-c' in args[:-1]:
-        return _writing_shell(args[args.index('-c') + 1])
+    if any(a in ('--help', '--version', '--dry-run', '--check') for a in args):
+        return None  # help, version, dry runs and checks change nothing
+    if cmd in ('bash', 'sh', 'zsh', 'dash'):
+        for i, a in enumerate(args[:-1]):
+            if re.match(r'^-[A-Za-z]*c$', a):  # -c, -lc, -ec
+                return _writing_shell(args[i + 1])
+    if cmd == 'eval':
+        return _writing_shell(' '.join(args))
+    if any(a in ('--write', '--fix') for a in args):
+        return 'rewrite files (--write/--fix)'
     if cmd == 'xargs':
         rest = args
         while rest and rest[0].startswith('-'):
@@ -459,6 +481,16 @@ def _writing_command(words):
         return _writing_command(rest)
     if cmd in _WRITE_CMDS:
         return f'run {cmd}'
+    if cmd in _ARCHIVERS and not any(a in _ARCHIVERS[cmd] for a in args):
+        return f'run {cmd}'
+    if cmd == 'tar':
+        mode = next((a.lstrip('-') for a in args if not a.startswith('--')), '')
+        if '--list' not in args and 't' not in mode:
+            return 'write files with tar'
+    if cmd == 'rsync' and not any(re.match(r'^-[A-Za-z]*n', a) for a in args):
+        return 'write files with rsync'
+    if cmd in ('awk', 'gawk') and 'inplace' in args:
+        return 'edit files in place'
     if cmd == 'tee' and any(a not in _SAFE_TARGETS for a in args if not a.startswith('-')):
         return 'write files with tee'
     if cmd == 'curl' and (any(re.match(r'^-[A-Za-z]*O', a) or a in ('--remote-name', '--remote-name-all')
@@ -477,8 +509,15 @@ def _writing_command(words):
         if any(a in ('-delete', '-fprint', '-fprintf', '-fls') for a in args):
             return 'delete or write files with find'
         for i, a in enumerate(args[:-1]):
-            if a in ('-exec', '-execdir', '-ok', '-okdir') and args[i + 1].rsplit('/', 1)[-1] in _WRITE_CMDS:
-                return f'run {args[i + 1]} through find'
+            if a in ('-exec', '-execdir', '-ok', '-okdir'):
+                inner = []
+                for w in args[i + 1:]:
+                    if w in (';', '+'):
+                        break
+                    inner.append(w)
+                reason = _writing_command(inner)
+                if reason:
+                    return f'{reason} through find'
     if cmd == 'git':
         sub = _first_arg(args, _GIT_OPTS_WITH_ARG)
         rest = args[args.index(sub) + 1:] if sub else []
@@ -490,12 +529,17 @@ def _writing_command(words):
         sub = _first_arg(args)
         if cmd == 'uv' and sub == 'pip':
             sub = _first_arg(args[args.index('pip') + 1:])
-        if sub in _PKG_WRITE or (cmd == 'yarn' and sub is None):
+        if sub in _PKG_WRITE or (cmd == 'yarn' and sub is None) or (sub == 'audit' and 'fix' in args) \
+                or (cmd.startswith('pip') and sub == 'download'):
             return f'change dependencies ({cmd} {sub or "install"})'
     return None
 
 
 def _writing_shell(cmd):
+    for m in _SUBSTITUTION.finditer(cmd):  # $(...) and `...` run even inside double quotes
+        reason = _writing_shell(m.group(1) if m.group(1) is not None else m.group(2))
+        if reason:
+            return reason
     tokens = _shell_tokens(cmd)
     words = []
     for i, t in enumerate(tokens):

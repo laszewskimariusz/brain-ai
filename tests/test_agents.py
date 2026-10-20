@@ -41,4 +41,7 @@ def test_readme_says_read_only_is_enforced():
     readme = (PLUGIN.parents[1] / "README.md").read_text()
     for name in READ_ONLY:
         row = next(line for line in readme.splitlines() if line.startswith(f"| `{name}` |"))
-        assert "read-only (enforced by the hook)" in row, name
+        assert "read-only (tool list + hook)" in row, name
+    # the Bash check is pattern-based: docs must not sell it as a hard guarantee
+    assert "best-effort" in readme
+    assert "read-only by enforcement" not in (PLUGIN.parents[1] / "CHANGELOG.md").read_text()

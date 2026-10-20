@@ -101,3 +101,28 @@ def test_listing_forms_of_git_and_tee_to_dev_null_pass():
                 "git diff | tee /dev/null", "curl -s https://example.com", "curl -sI https://example.com",
                 "wget -qO- https://example.com"]:
         assert run(ev("brain-core:reviewer", "Bash", command=cmd))[0] == 0, cmd
+
+
+# --- security review of v4.0.1 ------------------------------------------------------------
+
+def test_compound_commands_substitutions_and_eval_are_looked_into():
+    for cmd in ["if true; then rm f; fi", "for i in 1; do rm f; done", "{ rm f; }", "! rm f", "while false; do mv a b; done",
+                'bash -lc "rm f"', 'bash -ec "rm f"', "echo `rm f`", 'echo "$(rm f)"', 'eval "rm f"', "time rm f"]:
+        assert blocked_read_only(ev("brain-core:reviewer", "Bash", command=cmd)), cmd
+
+
+def test_more_tools_that_write_files():
+    for cmd in ["rsync -a src/ dst/", "tar xzf a.tgz", "tar czf a.tgz src", "unzip a.zip", "gzip big.log", "gunzip a.gz",
+                "patch -p1 < fix.diff", "sponge out.txt", "awk -i inplace '{print}' f", "find . -exec sed -i s/a/b/ {} +",
+                "npx prettier --write .", "npx eslint --fix src", "npm audit fix", "pip download x",
+                "git remote add up https://example.com/r.git", "git remote set-url origin x", "git clone https://example.com/r",
+                "git gc", "git update-ref refs/heads/x HEAD", "git submodule update --init", "git init", "git notes add -m x"]:
+        assert blocked_read_only(ev("brain-core:security", "Bash", command=cmd)), cmd
+
+
+def test_help_dry_run_and_check_forms_pass():
+    for cmd in ["git apply --check fix.diff", "git checkout --help", "cp --help", "rm --version", "pip install --dry-run x",
+                "npm ci --dry-run", "npm install --dry-run", "tar tzf a.tgz", "tar --list -f a.tgz", "unzip -l a.zip",
+                "git remote -v", "git remote show origin", "git submodule status", "git fetch origin", "npx prettier --check .",
+                "npx eslint src", "patch --dry-run -p1 < fix.diff", "rsync -an src/ dst/", "rsync --dry-run -a src/ dst/"]:
+        assert run(ev("brain-core:reviewer", "Bash", command=cmd))[0] == 0, cmd

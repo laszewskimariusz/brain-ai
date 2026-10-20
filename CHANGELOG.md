@@ -9,7 +9,7 @@ Security hardening.
 ### Security
 - The project kit turns the Bash sandbox on (`sandbox.enabled`) and hides the protected paths from shell commands with `sandbox.filesystem.denyRead`.
 - One list of protected paths in the secret guard (`PROTECTED`) feeds the hook, the kit's `permissions.deny` and the sandbox; tests keep them in sync. `.env.production` and the other common stages, `.secrets.*`, `*.p12`, `*.pfx`, SSH keys and `~/.ssh` are now denied in every layer.
-- `reviewer`, `security` and `researcher` are read-only by enforcement: the hook blocks file-writing tools and shell commands that change files, git state or dependencies inside those agents (`agent_type`).
+- `reviewer`, `security` and `researcher`: on top of their read-only tool lists, the hook makes a best-effort check inside those agents (`agent_type`) and blocks shell commands that change files, git state or dependencies, including inside `if`/`for` blocks, `bash -c`, `$(...)`, backticks and `eval`. Help, `--dry-run` and `--check` forms pass.
 - The guard blocks copying secret files out (`cp` source, `scp`, `rsync`, `curl @file`, `tar`, …) and feeding them with `<`.
 - An internal error while checking a covered tool now blocks (fails closed) instead of passing.
 
