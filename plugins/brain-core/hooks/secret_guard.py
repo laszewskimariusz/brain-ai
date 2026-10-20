@@ -245,17 +245,24 @@ def scan_bash(cmd, cwd=None):
 # Agents whose prompts say "read-only". Plugin subagents report agent_type as "brain-core:<name>".
 READ_ONLY_AGENTS = {'reviewer', 'security', 'researcher'}
 _WRITE_TOOLS = ('Write', 'Edit', 'MultiEdit', 'NotebookEdit')
-_WRITE_CMDS = {'rm', 'rmdir', 'unlink', 'shred', 'mv', 'cp', 'install', 'ln', 'tee', 'truncate', 'dd',
-               'chmod', 'chown', 'chgrp'}
-_GIT_WRITE = {'commit', 'push', 'pull', 'reset', 'checkout', 'switch', 'merge', 'rebase', 'stash', 'tag', 'apply',
-              'am', 'cherry-pick', 'revert', 'restore', 'clean', 'add', 'rm', 'mv', 'worktree'}
+_WRITE_CMDS = {'rm', 'rmdir', 'unlink', 'shred', 'mv', 'cp', 'install', 'ln', 'truncate', 'dd', 'touch', 'mkdir',
+               'mkfifo', 'mknod', 'chmod', 'chown', 'chgrp'}
+_GIT_WRITE = {'commit', 'push', 'pull', 'reset', 'checkout', 'switch', 'merge', 'rebase', 'apply', 'am',
+              'cherry-pick', 'revert', 'restore', 'clean', 'add', 'rm', 'mv'}
 _GIT_OPTS_WITH_ARG = {'-C', '-c', '--git-dir', '--work-tree', '--namespace'}
 _PKG_WRITE = {'install', 'i', 'ci', 'add', 'remove', 'rm', 'uninstall', 'un', 'update', 'up', 'upgrade', 'link',
               'publish', 'sync'}
 _PKG_TOOLS = {'npm', 'pnpm', 'yarn', 'bun', 'pip', 'pip3', 'uv', 'poetry'}
-_WRAPPERS = {'sudo', 'env', 'command', 'nice', 'nohup', 'time'}
-_SAFE_TARGETS = {'/dev/null', '/dev/stdout', '/dev/stderr'}
+# Wrappers that run the command after them, with the options that take a value.
+_WRAPPERS = {'sudo': {'-u', '-g', '-C', '-D', '-h', '-p', '-R', '-r', '-t', '-U'},
+             'env': {'-u', '-C', '-S', '--unset', '--chdir', '--split-string'},
+             'nice': {'-n', '--adjustment'}, 'timeout': {'-s', '-k', '--signal', '--kill-after'},
+             'time': {'-f', '-o'}, 'nohup': set(), 'command': set()}
+_SAFE_TARGETS = {'/dev/null', '/dev/stdout', '/dev/stderr', '-'}
 _PUNCT = set(';|&()<>')
+# Operator characters inside quotes or after a backslash are text, not shell syntax.
+_MASK = {c: chr(0xE000 + i) for i, c in enumerate(sorted(_PUNCT))}
+_UNMASK = str.maketrans({v: k for k, v in _MASK.items()})
 
 
 def is_read_only_agent(agent):
@@ -264,25 +271,101 @@ def is_read_only_agent(agent):
     return agent in READ_ONLY_AGENTS or (agent.startswith('brain-core:') and agent[11:] in READ_ONLY_AGENTS)
 
 
+def _mask_quoted(cmd):
+    out, quote, escaped = [], None, False
+    for c in cmd:
+        if escaped:
+            out.append(_MASK.get(c, c))
+            escaped = False
+        elif c == '\\' and quote != "'":
+            out.append(c)
+            escaped = True
+        elif quote:
+            if c == quote:
+                quote = None
+            out.append(_MASK.get(c, c))
+        else:
+            if c in '"\'':
+                quote = c
+            out.append(c)
+    return ''.join(out)
+
+
 def _shell_tokens(cmd):
-    lex = shlex.shlex(cmd.replace('\n', ';'), posix=True, punctuation_chars=True)
+    """Shell words and operators; operator characters from quoted text stay masked."""
+    masked = _mask_quoted(cmd.replace('\n', ';'))
+    lex = shlex.shlex(masked, posix=True, punctuation_chars=True)
     lex.whitespace_split = True
     try:
         return list(lex)
     except ValueError:
-        return cmd.split()
+        return masked.split()
 
 
 def _strip_wrappers(words):
     while words:
         w = words[0]
-        if w in _WRAPPERS or re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', w):
+        name = w.rsplit('/', 1)[-1]
+        if re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', w):
             words = words[1:]
-        elif w == 'timeout' and len(words) > 1:
-            words = words[2:]
-        else:
+            continue
+        if name not in _WRAPPERS:
             break
+        if name == 'command' and words[1:2] and words[1] in ('-v', '-V'):
+            return []  # command -v only looks the name up
+        words = words[1:]
+        while words and words[0].startswith('-') and words[0] != '-':
+            words = words[2:] if words[0] in _WRAPPERS[name] else words[1:]
+        if name == 'timeout' and words:
+            words = words[1:]  # the duration
     return words
+
+
+def _option_value(args, short, longs):
+    """Values given to an option: -o f, -sSLo f, -of, --output f, --output=f."""
+    values = []
+    for i, a in enumerate(args):
+        nxt = args[i + 1] if i + 1 < len(args) else ''
+        if a in longs:
+            values.append(nxt)
+        elif any(a.startswith(f'{o}=') for o in longs):
+            values.append(a.split('=', 1)[1])
+        elif re.match(r'^-[A-Za-z]', a) and short in a[1:]:
+            i = a.index(short, 1)
+            if re.fullmatch(r'[A-Za-z]*', a[1:i]):  # flags before it: -sSLo f, -qO-
+                values.append(a[i + 1:] or nxt)
+    return values
+
+
+def _git_write(sub, rest):
+    """git subcommands that only change state in some forms."""
+    pos = [a for a in rest if not a.startswith('-')]
+    flags = set(a.split('=', 1)[0] for a in rest if a.startswith('-'))
+    if sub == 'stash':
+        return not pos or pos[0] not in ('list', 'show')
+    if sub == 'worktree':
+        return not pos or pos[0] != 'list'
+    if sub == 'tag':
+        listing = flags & {'-l', '--list', '-n', '--contains', '--no-contains', '--points-at', '--merged',
+                           '--no-merged', '-v', '--verify'}
+        return bool(flags & {'-d', '--delete', '-a', '--annotate', '-s', '--sign', '-f', '--force', '-m', '-F',
+                             '-u'}) or bool(pos and not listing)
+    if sub == 'branch':
+        listing = flags & {'-l', '--list', '-a', '--all', '-r', '--remotes', '--contains', '--no-contains',
+                           '--merged', '--no-merged', '--points-at', '-v', '-vv', '--verbose', '--show-current'}
+        return bool(flags & {'-d', '-D', '--delete', '-m', '-M', '--move', '-c', '-C', '--copy', '-u',
+                             '--set-upstream-to', '--unset-upstream', '--edit-description', '-f', '--force'}) \
+            or bool(pos and not listing)
+    if sub == 'config':
+        if pos and pos[0] in ('set', 'unset', 'rename-section', 'remove-section', 'edit'):
+            return True
+        if pos and pos[0] in ('get', 'list'):
+            return False
+        if flags & {'--unset', '--unset-all', '--add', '--replace-all', '--rename-section', '--remove-section',
+                    '-e', '--edit'}:
+            return True
+        return not flags & {'--get', '--get-all', '--get-regexp', '--get-urlmatch', '-l', '--list'} and len(pos) >= 2
+    return False
 
 
 def _first_arg(args, with_value=()):
@@ -313,6 +396,16 @@ def _writing_command(words):
         return _writing_command(rest)
     if cmd in _WRITE_CMDS:
         return f'run {cmd}'
+    if cmd == 'tee' and any(a not in _SAFE_TARGETS for a in args if not a.startswith('-')):
+        return 'write files with tee'
+    if cmd == 'curl' and (any(re.match(r'^-[A-Za-z]*O', a) or a in ('--remote-name', '--remote-name-all')
+                              for a in args) or any(
+            v not in _SAFE_TARGETS for v in _option_value(args, 'o', ('--output',)) + _option_value(
+                args, 'D', ('--dump-header',)) + _option_value(args, 'c', ('--cookie-jar',)))):
+        return 'download into a file'
+    if cmd == 'wget' and '--spider' not in args and not any(
+            v in _SAFE_TARGETS for v in _option_value(args, 'O', ('--output-document',))):
+        return 'download into a file'
     if cmd == 'sed' and any(a.startswith('-i') or a == '--in-place' for a in args):
         return 'edit files in place'
     if cmd == 'perl' and any(re.match(r'^-\w*i', a) for a in args):
@@ -325,7 +418,8 @@ def _writing_command(words):
                 return f'run {args[i + 1]} through find'
     if cmd == 'git':
         sub = _first_arg(args, _GIT_OPTS_WITH_ARG)
-        if sub in _GIT_WRITE:
+        rest = args[args.index(sub) + 1:] if sub else []
+        if sub in _GIT_WRITE or _git_write(sub, rest):
             return f'run git {sub}'
     if re.match(r'^python[0-9.]*$', cmd) and args[:2] == ['-m', 'pip']:
         cmd, args = 'pip', args[2:]
@@ -353,7 +447,7 @@ def _writing_shell(cmd):
                 return reason
             words = []
         elif t != '$':
-            words.append(t)
+            words.append(t.translate(_UNMASK))
     return _writing_command(words)
 
 

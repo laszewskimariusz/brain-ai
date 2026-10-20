@@ -76,7 +76,13 @@ The kit pins the release it was set up with: `extraKnownMarketplaces.brain-ai.so
 
 1. In this repo: bump `version` in `plugins/brain-core/.claude-plugin/plugin.json`, add the `CHANGELOG.md` entry and set `ref` in `project-kit/.claude/settings.json` to the new tag (the tests fail until they match).
 2. Merge, tag `vX.Y.Z` and publish the GitHub release.
-3. In each project: set `ref` in `.claude/settings.json` to the new tag, then run `/plugin marketplace update brain-ai`.
+3. In each project: set `ref` in `.claude/settings.json` to the new tag. On a machine that already has the marketplace, re-add it at that tag and reinstall:
+
+   ```
+   /plugin marketplace remove brain-ai
+   /plugin marketplace add laszewskimariusz/brain-ai@vX.Y.Z
+   /plugin install brain-core@brain-ai
+   ```
 
 ## What is in the plugin
 
@@ -96,7 +102,7 @@ Always-on cost of the whole plugin: **~580 tokens per session** (`claude plugin 
 
 The **secret guard** is a `PreToolUse` hook. It blocks writing literal secrets and known token shapes, reading `.env`/key files, copying them out and dumping the environment — and never echoes the value it caught. It runs at plugin level, so every agent gets it. It is a seat belt against honest mistakes, not the boundary: see [Security](#security).
 
-The same hook keeps `reviewer`, `security` and `researcher` read-only: inside those agents it blocks `Write`/`Edit`/`MultiEdit`/`NotebookEdit` and shell commands that change files, git state or dependencies (redirects into files, `rm`, `mv`, `cp`, `sed -i`, `git commit`/`push`/`reset`/…, `npm install`, `pip install`, …). Reading, `git diff`/`log`/`show`, running tests and audits stay allowed. It reads `agent_type` from the hook input, so it applies to subagents only.
+The same hook keeps `reviewer`, `security` and `researcher` read-only: inside those agents it blocks `Write`/`Edit`/`MultiEdit`/`NotebookEdit` and shell commands that change files, git state or dependencies (redirects into files, `rm`, `mv`, `cp`, `sed -i`, `git commit`/`push`/`reset`/…, `npm install`, `pip install`, …). Reading, `git diff`/`log`/`show`, running tests and audits stay allowed. It reads `agent_type` from the hook input, so it applies inside those agents — as subagents, or in a session started with `claude --agent`.
 
 ## Repository layout
 

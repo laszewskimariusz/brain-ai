@@ -40,6 +40,9 @@ def test_readme_explains_pinning_and_how_to_update():
     update = t.split("## Updating", 1)[1].split("\n## ", 1)[0]
     for step in ("plugin.json", "CHANGELOG", "tag", "ref"):
         assert step in update, step
+    # changing ref and running "marketplace update" fails (checked on Claude Code 2.1.286); re-add at the tag
+    assert "/plugin marketplace add laszewskimariusz/brain-ai@v" in update
+    assert "marketplace update" not in update
 
 
 def test_changelog_has_the_current_release_with_sections(load_json):

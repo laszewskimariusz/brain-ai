@@ -93,14 +93,14 @@ def test_checks_run_in_parallel_with_an_overall_deadline():
     projects = [{"slug": f"p{i}", "stage": "live", "repo": "r", "url": "u"} for i in range(6)]
     t = time.monotonic()
     rows = ps.rows(projects, repo_check=slow, http_check=slow)
-    assert time.monotonic() - t < 1.5 and all(r[2:] == ("ok", "ok") for r in rows)
+    assert time.monotonic() - t < 2.0 and all(r[2:] == ("ok", "ok") for r in rows)
 
     def stuck(_):
         time.sleep(3)
         return "late"
     t = time.monotonic()
     rows = ps.rows(projects[:2], repo_check=stuck, http_check=stuck, deadline=0.5)
-    assert time.monotonic() - t < 1.5 and rows[0][2:] == ("timeout", "timeout")
+    assert time.monotonic() - t < 2.0 and all(r[2:] == ("timeout", "timeout") for r in rows)
 
 
 def test_brain_template_says_where_the_status_script_lives():

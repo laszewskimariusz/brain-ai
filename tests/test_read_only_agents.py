@@ -70,3 +70,34 @@ def test_other_agents_and_the_main_session_can_write():
 def test_secret_rules_still_apply_to_read_only_agents():
     code, err = run(ev("brain-core:reviewer", "Bash", command="cat .env"))
     assert code == 2 and "secret file" in err
+
+
+# --- regressions from the v4.0.1 review ---------------------------------------------------
+
+def test_quoted_operators_are_not_redirects():
+    for cmd in ['grep -rn ">" src', "grep -n '->' src/app.ts", 'echo "a>b"', "rg -n 'x => y' src", "tr '>' '<' < a.txt",
+                'grep "a|b;c&d" src', r"grep \> src"]:
+        assert run(ev("brain-core:reviewer", "Bash", command=cmd))[0] == 0, cmd
+
+
+def test_wrapper_options_do_not_hide_the_command():
+    for cmd in ["sudo -n rm x", "sudo -u app rm x", "nice -n 5 rm x", "env -i rm x", "timeout -s KILL 5 rm x",
+                "timeout 5 rm x", "nohup rm x"]:
+        assert blocked_read_only(ev("brain-core:reviewer", "Bash", command=cmd)), cmd
+
+
+def test_more_writing_commands_are_blocked():
+    for cmd in ["touch x", "mkdir d", "mkfifo p", "curl -o f https://example.com", "curl -sSLo f https://example.com",
+                "wget -O f https://example.com", "wget https://example.com/f", "git config user.name x",
+                "git config --unset user.name", "git branch -D x", "git branch new-branch", "git stash", "git stash pop",
+                "git tag v1", "git tag -d v1", "git worktree add ../w", "tee out.txt"]:
+        assert blocked_read_only(ev("brain-core:security", "Bash", command=cmd)), cmd
+
+
+def test_listing_forms_of_git_and_tee_to_dev_null_pass():
+    for cmd in ["git stash list", "git stash show -p", "git tag", "git tag -l", "git tag --list 'v4*'",
+                "git worktree list", "git branch", "git branch -a", "git branch --list 'v4*'", "git branch --show-current",
+                "git config user.name", "git config --get user.name", "git config --list",
+                "git diff | tee /dev/null", "curl -s https://example.com", "curl -sI https://example.com",
+                "wget -qO- https://example.com"]:
+        assert run(ev("brain-core:reviewer", "Bash", command=cmd))[0] == 0, cmd
