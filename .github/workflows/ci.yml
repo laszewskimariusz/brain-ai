@@ -23,5 +23,27 @@ jobs:
           GUARD_SKIP_GITLEAKS: "1"
           GUARD_HISTORY_SINCE: v3.0.0
           GUARD_PRIVATE_PATTERNS: ${{ secrets.GUARD_PRIVATE_PATTERNS }}
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+  plugin:
+    # Manifests and a real install from this checkout; no login needed.
+    runs-on: ubuntu-latest
+    env: { DISABLE_AUTOUPDATER: "1", DISABLE_TELEMETRY: "1" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm i -g @anthropic-ai/claude-code@2.1.286
+      - name: validate manifests
+        run: |
+          claude plugin validate .
+          claude plugin validate plugins/brain-core
+      - name: install from this checkout in a clean HOME
+        run: |
+          HOME="$(mktemp -d)"
+          export HOME
+          claude plugin marketplace add "$GITHUB_WORKSPACE"
+          claude plugin install brain-core@brain-ai
+          claude plugin details brain-core@brain-ai | tee "$RUNNER_TEMP/details.txt"
+          grep -q 'Agents (7)' "$RUNNER_TEMP/details.txt"
+          grep -q 'Skills (4)' "$RUNNER_TEMP/details.txt"
