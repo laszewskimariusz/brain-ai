@@ -52,3 +52,11 @@ def test_changelog_has_the_current_release_with_sections(load_json):
     assert m, version
     for section in ("### Security", "### Fixed", "### Changed"):
         assert section in m.group(1), section
+
+
+def test_readme_explains_the_sandbox_approval_settings_and_hook_limits():
+    t = (ROOT / "README.md").read_text()
+    for key in ("autoAllowBashIfSandboxed", "allowUnsandboxedCommands", "failIfUnavailable"):
+        assert key in t, key
+    limits = t.split("## Limits", 1)[1]
+    assert "agent_type" in limits and "matcher" in limits

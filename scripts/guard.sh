@@ -17,8 +17,9 @@ fi
 PATTERN="$(IFS='|'; echo "${patterns[*]}")"
 SCOPE=(-- . ':!tests/guard/guard.test.sh')
 
-# Working tree (tracked + staged), case-insensitive.
-if git grep -nIiE "$PATTERN" "${SCOPE[@]}"; then
+# Working tree (tracked + staged), case-insensitive. Report file:line only: CI logs are public.
+if git grep -qIiE "$PATTERN" "${SCOPE[@]}"; then
+  { git grep -nIiE "$PATTERN" "${SCOPE[@]}" || true; } | cut -d: -f1,2
   echo "guard: forbidden string in working tree"; exit 1
 fi
 # Every commit of HEAD: a string that was committed and later removed is still public.
@@ -27,7 +28,10 @@ fi
 if [ -n "${GUARD_HISTORY_SINCE:-}" ] && ! git rev-parse -q --verify "${GUARD_HISTORY_SINCE}^{commit}" >/dev/null; then
   echo "guard: GUARD_HISTORY_SINCE=$GUARD_HISTORY_SINCE does not exist (fetch tags?)"; exit 1
 fi
-revs=$(git rev-list "${GUARD_HISTORY_SINCE:+$GUARD_HISTORY_SINCE..}HEAD" 2>/dev/null || true)
+# "--" ends the revisions: a file named HEAD must not turn this into an error and a silent pass.
+if ! revs=$(git rev-list "${GUARD_HISTORY_SINCE:+$GUARD_HISTORY_SINCE..}HEAD" --); then
+  echo "guard: cannot list the history to scan"; exit 1
+fi
 # Decide with -q (no pipe): piping into `head` lets SIGPIPE + pipefail turn a hit into a pass.
 if [ -n "$revs" ] && git grep -qIiE "$PATTERN" $revs "${SCOPE[@]}"; then
   { git grep -lIiE "$PATTERN" $revs "${SCOPE[@]}" || true; } | sed -n '1,5p' || true

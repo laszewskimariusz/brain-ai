@@ -31,3 +31,13 @@ def test_ci_pins_claude_code_and_gitleaks():
     assert re.search(r"npm i(?:nstall)? -g @anthropic-ai/claude-code@\d+\.\d+\.\d+", CI)
     m = re.search(r"uses:\s*gitleaks/gitleaks-action@(\S+)", CI)
     assert m and re.fullmatch(r"[0-9a-f]{40}", m.group(1)), "pin gitleaks-action to a commit SHA"
+
+
+def test_ci_pins_every_action_by_sha_and_drops_checkout_credentials():
+    jobs = yaml.safe_load(CI)["jobs"]
+    for job in jobs.values():
+        for step in job["steps"]:
+            if "uses" in step:
+                assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", step["uses"]), step["uses"]
+            if step.get("uses", "").startswith("actions/checkout@"):
+                assert step["with"]["persist-credentials"] is False

@@ -70,6 +70,7 @@
         "./**/id_dsa",
         "~/.ssh"
       ]
-    }
+    },
+    "autoAllowBashIfSandboxed": false
   }
 }

@@ -135,7 +135,8 @@ description: Set up a project repo for the brain-ai workflow — a short CLAUDE.
         "./**/id_dsa",
         "~/.ssh"
       ]
-    }
+    },
+    "autoAllowBashIfSandboxed": false
   }
 }
 ```

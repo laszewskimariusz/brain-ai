@@ -126,7 +126,9 @@ tests/                            pytest: manifests, agents, skills, secret guar
 
 - Secrets never live in files: settings and docs hold key names only; values are read into a variable at runtime.
 - Layers, strongest first: Bash sandbox (enforced by the OS) → `permissions.deny` (Claude's file tools) → secret guard hook (seat belt). The project kit turns the sandbox on and gives the sandbox and `permissions.deny` the same protected-path list the hook uses. Instructions in prompts enforce nothing.
-- The sandbox covers shell commands only, and needs `bubblewrap` and `socat` on Linux; without them Claude Code runs commands unsandboxed, so install them (or set `sandbox.failIfUnavailable`).
+- The sandbox covers shell commands only, and needs `bubblewrap` and `socat` on Linux; without them Claude Code runs commands unsandboxed, so install them (or set `sandbox.failIfUnavailable` to refuse to start without them).
+- The kit sets `sandbox.autoAllowBashIfSandboxed` to `false`: turning the sandbox on does not change who approves commands. When the sandbox blocks a command, Claude may ask to rerun it outside the sandbox; that rerun needs your approval. Set `sandbox.allowUnsandboxedCommands` to `false` to remove the escape hatch entirely.
+- Credential stores that tools read themselves (`.netrc`, `.pgpass`, `.git-credentials`, `~/.aws/credentials`) are denied to Claude's file tools and the hook, not to the sandbox, so `git`, `psql` and cloud CLIs keep working there.
 - Every push runs the tests, a private-pattern scan of the tree and history, and gitleaks.
 
 ## Limits
@@ -134,6 +136,7 @@ tests/                            pytest: manifests, agents, skills, secret guar
 - Built for a small team (one owner plus agents). Larger teams will want a real issue tracker integration and access control.
 - Agent prompts are tuned for Claude models; other harnesses read the skills but not the hooks.
 - The numbers above come from one team's usage, not a benchmark.
+- The hook's matcher covers `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Read`, `Grep`, `Glob` and `Bash`; other tools (MCP servers, PowerShell) are not checked. Read-only roles are recognised by `agent_type` `brain-core:<name>` (or the bare name, for a copied agent).
 
 ## License
 

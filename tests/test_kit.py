@@ -51,3 +51,9 @@ def test_project_kit_turns_the_bash_sandbox_on():
     cfg = json.loads((KIT / ".claude/settings.json").read_text())
     assert cfg["sandbox"]["enabled"] is True
     assert cfg["sandbox"]["filesystem"]["denyRead"]
+
+
+def test_sandbox_does_not_silently_auto_approve_bash():
+    cfg = json.loads((KIT / ".claude/settings.json").read_text())
+    # turning the sandbox on must not change who approves commands
+    assert cfg["sandbox"]["autoAllowBashIfSandboxed"] is False
