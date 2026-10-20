@@ -94,6 +94,9 @@ PROTECTED = (
     ['.env'] + [f'.env.{s}' for s in _ENV_STAGES] + ['.env.*.local', '.secrets', '.secrets.*',
      '*.pem', '*.p12', '*.pfx', 'id_rsa', 'id_ed25519', 'id_ecdsa', 'id_dsa', '~/.ssh/**']
 )
+# Credential stores that git, psql and cloud CLIs read themselves: denied to Claude's file tools and the
+# hook, but not hidden from the sandbox, where those programs need them.
+CREDENTIAL_FILES = ['.netrc', '.pgpass', '.git-credentials', '~/.aws/credentials']
 
 
 def read_rule(glob):
@@ -103,14 +106,20 @@ def read_rule(glob):
 
 def sandbox_path(glob):
     """sandbox.filesystem.denyRead entry for a protected path ("./" = project root)."""
-    return glob[:-3] if glob.startswith('~/') and glob.endswith('/**') else f'./**/{glob}'
+    if glob.startswith('~/'):
+        return glob[:-3] if glob.endswith('/**') else glob
+    return f'./**/{glob}'
 
 
 _SAFE_ENV = re.compile(r'^\.env\.(?:example|sample|template|dist)$')
 _ANY_ENV = re.compile(r'^\.env(?:\.[\w.-]+)?$')          # the hook also catches stages not listed above
 _CODE_EXT = {'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'php', 'md'}
-_NAME_GLOBS = [g for g in PROTECTED if not g.startswith('~/')]
-_SSH_DIR = re.compile(r'(?:^|/)\.ssh/')
+_NAME_GLOBS = [g for g in PROTECTED + CREDENTIAL_FILES if not g.startswith('~/')]
+_HOME_FILES = [g[1:] for g in CREDENTIAL_FILES if g.startswith('~/')]   # matched as a path suffix
+_EXAMPLES = [g.replace('*', 'x') for g in _NAME_GLOBS]
+_SSH_DIR = re.compile(r'(?:^|/)\.ssh(?:/|$)')
+_PROC_ENVIRON = re.compile(r'^/proc/[^/]+/environ$')
+_GLOB_CHARS = re.compile(r'[*?\[\]]')
 
 
 def _extra_globs():
@@ -118,8 +127,16 @@ def _extra_globs():
     return [g for g in raw.split(':') if g]
 
 
-def _holds_private_key(path, cwd):
-    """*.key is also the extension of ordinary text files: block only a file that holds a key."""
+def _holds_private_key(path, cwd, unresolved=False):
+    """*.key is also the extension of ordinary text files: block only a file that holds a key.
+
+    unresolved: the answer for a file the hook cannot find (a variable in the path, a cd earlier in
+    the command). Read passes it (nothing to leak); Bash blocks it.
+    """
+    if unresolved and path.startswith('.') and '/' not in path:
+        unresolved = False  # a jq filter such as .data.key, not a file
+    if '$' in path:
+        return unresolved
     full = os.path.join(cwd or os.getcwd(), os.path.expanduser(path))
     try:
         if not stat.S_ISREG(os.stat(full).st_mode):
@@ -127,15 +144,29 @@ def _holds_private_key(path, cwd):
         fd = os.open(full, os.O_RDONLY | os.O_NONBLOCK)
         with os.fdopen(fd, 'rb') as f:
             return b'PRIVATE KEY' in f.read(65536)
+    except FileNotFoundError:
+        return unresolved
     except OSError:
-        return False  # nothing there to leak
+        return False
 
 
-def is_secret_path(path, cwd=None):
+def _glob_may_hit(full, base):
+    """A shell or Grep glob that could expand to a protected name (.env*, *.pem), not just any glob (*)."""
+    if _SSH_DIR.search(full):
+        return True
+    literal = _GLOB_CHARS.sub('', base)
+    return bool(literal.strip('.')) and any(fnmatch.fnmatchcase(e, base) for e in _EXAMPLES)
+
+
+def is_secret_path(path, cwd=None, unresolved_key=False):
     if not isinstance(path, str) or not path:
         return False
     full = os.path.expanduser(path)
     base = full.rstrip('/').rsplit('/', 1)[-1]
+    if _GLOB_CHARS.search(full):
+        return _glob_may_hit(full, base)
+    if _PROC_ENVIRON.match(full) or any(full.endswith(h) for h in _HOME_FILES):
+        return True
     if _SAFE_ENV.match(base):
         return False
     if _ANY_ENV.match(base) and base.rsplit('.', 1)[-1] not in _CODE_EXT:
@@ -144,7 +175,7 @@ def is_secret_path(path, cwd=None):
         return True
     if _SSH_DIR.search(full) and not base.endswith('.pub'):
         return True
-    if base.endswith('.key') and _holds_private_key(path, cwd):
+    if base.endswith('.key') and _holds_private_key(path, cwd, unresolved_key):
         return True
     return any(fnmatch.fnmatch(path, g) for g in _extra_globs())
 
@@ -173,10 +204,19 @@ _ENV_DUMPS = [
 _PRINTENV_VAR = re.compile(r'\bprintenv\s+[A-Za-z_][A-Za-z0-9_]*')
 
 
+_ASSIGNED = re.compile(r'(?:^|[\s;&|(])(?:export\s+|local\s+|readonly\s+)?[A-Za-z_]\w*="?$')
+
+
 def _captured(cmd, pos):
-    """True when pos is inside $( ... ): the output goes into a variable, not to the screen."""
+    """True when pos is inside NAME=$( ... ): the output goes into a variable, not to the screen.
+
+    Only an assignment counts: in echo $(cat .env) or curl -d "$(cat .env)" the outer command
+    prints or sends the value.
+    """
     prefix = cmd[:pos]
-    return prefix.count('$(') > prefix.count(')')
+    if prefix.count('$(') <= prefix.count(')'):
+        return False
+    return bool(_ASSIGNED.search(prefix[:prefix.rfind('$(')]))
 
 
 def _words(segment):
@@ -198,8 +238,26 @@ def _arg_paths(word):
             yield word.rsplit(sep, 1)[-1]
 
 
-def _secret_args(args, cwd):
-    return [a for a in args if not a.startswith('-') and any(is_secret_path(p, cwd) for p in _arg_paths(a))]
+# Options whose value is not a file the command reads out: --exclude .env, curl --cacert ca.pem, scp -i key.
+_VALUE_OPTS = {'rsync': {'--exclude', '--exclude-from', '--include', '-e'}, 'tar': {'--exclude', '-X', '--exclude-from'},
+               'zip': {'-x'}, 'curl': {'--cacert', '--cert', '--key', '--capath', '-E'}, 'scp': {'-i', '-F'},
+               'grep': {'--exclude', '--exclude-from', '--include'}, 'rg': {'-g', '--glob', '--iglob'}}
+
+
+def _operands(cmd, args):
+    out, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in _VALUE_OPTS.get(cmd, ()):
+            skip = True
+        elif not a.startswith('-'):
+            out.append(a)
+    return out
+
+
+def _secret_args(operands, cwd):
+    return [a for a in operands if any(is_secret_path(p, cwd, unresolved_key=True) for p in _arg_paths(a))]
 
 
 def _scan_segment(part, cwd):
@@ -210,14 +268,14 @@ def _scan_segment(part, cwd):
     for m in _INPUT_REDIRECT.finditer(part):
         if is_secret_path(m.group(1), cwd):
             return 'feeding a secret file to a command'
-    found = _secret_args(args, cwd)
+    operands = _operands(cmd, args)
+    found = _secret_args(operands, cwd)
     if not found:
         return None
     if cmd in _MOVERS:
         return 'copying a secret file out'
     if cmd in _COPIERS:
-        positional = [a for a in args if not a.startswith('-')]
-        return 'copying a secret file out' if any(a in found for a in positional[:-1]) else None
+        return 'copying a secret file out' if any(a in found for a in operands[:-1]) else None
     if cmd not in _DISPLAYERS or _GREP_CHECK.match(part.strip()):
         return None
     if cmd == 'sed' and re.search(r'\s(?:-i\S*|--in-place)\b', part):
@@ -475,7 +533,7 @@ def check(tool, ti, cwd=None):
             parts += [e.get('new_string') for e in edits if isinstance(e, dict)]
         return scan_content('\n'.join(p for p in parts if isinstance(p, str)))
     if tool in ('Read', 'Grep', 'Glob'):
-        for key in ('file_path', 'path'):
+        for key in ('file_path', 'path', 'glob'):
             if is_secret_path(ti.get(key), cwd):
                 return 'reading a secret file'
         return None

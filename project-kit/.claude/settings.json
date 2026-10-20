@@ -35,6 +35,10 @@
       "Read(**/id_ecdsa)",
       "Read(**/id_dsa)",
       "Read(~/.ssh/**)",
+      "Read(**/.netrc)",
+      "Read(**/.pgpass)",
+      "Read(**/.git-credentials)",
+      "Read(~/.aws/credentials)",
       "Bash(env)",
       "Bash(printenv*)"
     ]

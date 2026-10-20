@@ -100,6 +100,10 @@ description: Set up a project repo for the brain-ai workflow — a short CLAUDE.
       "Read(**/id_ecdsa)",
       "Read(**/id_dsa)",
       "Read(~/.ssh/**)",
+      "Read(**/.netrc)",
+      "Read(**/.pgpass)",
+      "Read(**/.git-credentials)",
+      "Read(~/.aws/credentials)",
       "Bash(env)",
       "Bash(printenv*)"
     ]
