@@ -11,10 +11,12 @@ Blocks:
 - Write / Edit / MultiEdit / NotebookEdit: a literal value assigned to a *KEY / *SECRET / *TOKEN /
   *PASSWORD name (letters and digits, >= 12 chars, not a placeholder, not a call or reference),
   well-known token shapes, private keys, passwords embedded in URLs, Bearer tokens.
-- Read / Grep / Glob of secret files: .env and .env.<stage> (not .env.example), .secrets, *.pem,
-  *.key, SSH private keys, plus globs from BRAIN_GUARD_SECRET_PATHS (colon-separated).
+- Read / Grep / Glob of secret files: the PROTECTED list below (.env and its stages, not
+  .env.example; .secrets; *.pem/*.p12/*.pfx; SSH keys and ~/.ssh), *.key files that hold a private
+  key, plus globs from BRAIN_GUARD_SECRET_PATHS (colon-separated).
 - Bash: environment dumps (env, printenv, export -p, set, /proc/*/environ, container env,
-  docker inspect without --format) unless captured into a variable; printing secret files.
+  docker inspect without --format) unless captured into a variable; printing secret files;
+  copying them out (cp source, scp, rsync, curl @file, tar, ...) or feeding them with "<".
 
 It never echoes the matched value. Malformed or unexpected input is allowed silently.
 """
@@ -22,6 +24,7 @@ import fnmatch
 import json
 import os
 import re
+import shlex
 import sys
 
 # --- file contents -------------------------------------------------------------------------
@@ -81,13 +84,31 @@ def scan_content(text):
 
 # --- paths ---------------------------------------------------------------------------------
 
-_SAFE_ENV = re.compile(r'(?:^|/)\.env\.(?:example|sample|template|dist)$')
-_SECRET_PATH = re.compile(
-    r'(?:^|/)\.env(?:\.[A-Za-z0-9_-]+)?$'          # .env, .env.local, .env.production
-    r'|(?:^|/)\.secrets(?:\.[A-Za-z0-9]+)?$'        # .secrets, .secrets.age
-    r'|\.(?:pem|key|p12|pfx)$'                      # certificates and keys
-    r'|(?:^|/)id_(?:rsa|ed25519|ecdsa|dsa)$'        # SSH private keys (not .pub)
+# The one list of protected paths. The project kit's permissions.deny and sandbox.filesystem.denyRead
+# are generated from it (tests keep them in sync). Bare names match at any depth; "~/" is the home
+# directory. .env stages are listed by name so that .env.example stays readable for every layer.
+_ENV_STAGES = ('local', 'development', 'dev', 'production', 'prod', 'staging', 'stage', 'test', 'ci', 'preview')
+PROTECTED = (
+    ['.env'] + [f'.env.{s}' for s in _ENV_STAGES] + ['.env.*.local', '.secrets', '.secrets.*',
+     '*.pem', '*.p12', '*.pfx', 'id_rsa', 'id_ed25519', 'id_ecdsa', 'id_dsa', '~/.ssh/**']
 )
+
+
+def read_rule(glob):
+    """permissions.deny entry for a protected path (gitignore syntax, any depth under the project)."""
+    return f'Read({glob})' if glob.startswith('~/') else f'Read(**/{glob})'
+
+
+def sandbox_path(glob):
+    """sandbox.filesystem.denyRead entry for a protected path ("./" = project root)."""
+    return glob[:-3] if glob.startswith('~/') and glob.endswith('/**') else f'./**/{glob}'
+
+
+_SAFE_ENV = re.compile(r'^\.env\.(?:example|sample|template|dist)$')
+_ANY_ENV = re.compile(r'^\.env(?:\.[\w.-]+)?$')          # the hook also catches stages not listed above
+_CODE_EXT = {'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'php', 'md'}
+_NAME_GLOBS = [g for g in PROTECTED if not g.startswith('~/')]
+_SSH_DIR = re.compile(r'(?:^|/)\.ssh/')
 
 
 def _extra_globs():
@@ -95,10 +116,29 @@ def _extra_globs():
     return [g for g in raw.split(':') if g]
 
 
-def is_secret_path(path):
-    if not isinstance(path, str) or not path or _SAFE_ENV.search(path):
+def _holds_private_key(path, cwd):
+    """*.key is also the extension of ordinary text files: block only a file that holds a key."""
+    try:
+        with open(os.path.join(cwd or os.getcwd(), os.path.expanduser(path)), 'rb') as f:
+            return b'PRIVATE KEY' in f.read(4096)
+    except OSError:
+        return False  # nothing there to leak
+
+
+def is_secret_path(path, cwd=None):
+    if not isinstance(path, str) or not path:
         return False
-    if _SECRET_PATH.search(path):
+    full = os.path.expanduser(path)
+    base = full.rstrip('/').rsplit('/', 1)[-1]
+    if _SAFE_ENV.match(base):
+        return False
+    if _ANY_ENV.match(base) and base.rsplit('.', 1)[-1] not in _CODE_EXT:
+        return True
+    if any(fnmatch.fnmatchcase(base, g) for g in _NAME_GLOBS):
+        return True
+    if _SSH_DIR.search(full) and not base.endswith('.pub'):
+        return True
+    if base.endswith('.key') and _holds_private_key(path, cwd):
         return True
     return any(fnmatch.fnmatch(path, g) for g in _extra_globs())
 
@@ -106,14 +146,14 @@ def is_secret_path(path):
 # --- shell ---------------------------------------------------------------------------------
 
 _SEP = re.compile(r'\|\||&&|[|;&\n]|\$\(|\)|`')
-_SECRET_FILE_ARG = re.compile(
-    r'(?<![\w.-])(?:\S*/)?(?:\.env(?:\.(?!example|sample|template|dist)[A-Za-z0-9_-]+)?|\.secrets(?:\.[A-Za-z0-9]+)?|[A-Za-z0-9_][\w-]*(?:\.[\w-]+)*\.(?:pem|key))(?![\w.-])'
-)
 _DISPLAYERS = {'cat', 'less', 'more', 'head', 'tail', 'bat', 'strings', 'grep', 'egrep', 'rg', 'awk', 'sed',
                'nl', 'tac', 'diff', 'xxd', 'od', 'hexdump', 'base64', 'jq', 'cut', 'sort'}
+# Commands that move a file's content somewhere else: any secret argument is a leak.
+_MOVERS = {'scp', 'rsync', 'curl', 'wget', 'tar', 'zip', 'gzip', 'bzip2', 'xz', '7z', 'nc', 'ncat', 'socat', 'dd'}
+_COPIERS = {'cp', 'install'}  # a secret source is a leak; a secret destination (cp .env.example .env) is not
 _ANCHORED_KEY = r'["\']\^[A-Za-z0-9_]+=["\']'
 _GREP_CHECK = re.compile(r'^grep\s+(?:-[A-Za-z]*\s+)*-[A-Za-z]*[qc][A-Za-z]*\s+(?:-[A-Za-z]+\s+)*' + _ANCHORED_KEY + r'\s+\S+$')
-
+_INPUT_REDIRECT = re.compile(r'(?<![<0-9])<\s*([^\s<>|;&]+)')
 _ENV_DUMPS = [
     (re.compile(r'(?:^|[;&|(`]\s*|\bsudo\s+)env(?:\s+-[0-9A-Za-z]+)*\s*(?:$|[|;&)`\'"])'), 'environment dump (env)'),
     (re.compile(r'\bprintenv\b(?!\s+[A-Za-z_][A-Za-z0-9_]*)'), 'printenv without a variable name'),
@@ -133,14 +173,53 @@ def _captured(cmd, pos):
     return prefix.count('$(') > prefix.count(')')
 
 
-def _first_word(segment):
-    words = segment.strip().split()
+def _words(segment):
+    """Shell words of one command, without leading sudo and VAR=value assignments."""
+    try:
+        words = shlex.split(segment)
+    except ValueError:
+        words = segment.split()
     while words and (words[0] == 'sudo' or re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', words[0])):
         words.pop(0)
-    return words[0].rsplit('/', 1)[-1] if words else ''
+    return words
 
 
-def scan_bash(cmd):
+def _arg_paths(word):
+    """A word and the file names it may carry: curl -F f=@.env, dd if=.env."""
+    yield word
+    for sep in ('@', '='):
+        if sep in word:
+            yield word.rsplit(sep, 1)[-1]
+
+
+def _secret_args(args, cwd):
+    return [a for a in args if not a.startswith('-') and any(is_secret_path(p, cwd) for p in _arg_paths(a))]
+
+
+def _scan_segment(part, cwd):
+    words = _words(part)
+    if not words:
+        return None
+    cmd, args = words[0].rsplit('/', 1)[-1], words[1:]
+    for m in _INPUT_REDIRECT.finditer(part):
+        if is_secret_path(m.group(1), cwd):
+            return 'feeding a secret file to a command'
+    found = _secret_args(args, cwd)
+    if not found:
+        return None
+    if cmd in _MOVERS:
+        return 'copying a secret file out'
+    if cmd in _COPIERS:
+        positional = [a for a in args if not a.startswith('-')]
+        return 'copying a secret file out' if any(a in found for a in positional[:-1]) else None
+    if cmd not in _DISPLAYERS or _GREP_CHECK.match(part.strip()):
+        return None
+    if cmd == 'sed' and re.search(r'\s(?:-i\S*|--in-place)\b', part):
+        return None  # in-place edit prints nothing
+    return 'printing a secret file (use .env.example, or capture one value into a variable)'
+
+
+def scan_bash(cmd, cwd=None):
     if not isinstance(cmd, str) or not cmd:
         return None
     for pattern, reason in _ENV_DUMPS:
@@ -154,19 +233,15 @@ def scan_bash(cmd):
     for part in _SEP.split(cmd):
         start = cmd.find(part, pos)
         pos = start + len(part) if start >= 0 else pos
-        if not _SECRET_FILE_ARG.search(part) or _first_word(part) not in _DISPLAYERS:
-            continue
-        if _GREP_CHECK.match(part.strip()) or _captured(cmd, max(start, 0)):
-            continue
-        if _first_word(part) == 'sed' and re.search(r'\s(?:-i\S*|--in-place)\b', part):
-            continue  # in-place edit prints nothing
-        return 'printing a secret file (use .env.example, or capture one value into a variable)'
+        reason = _scan_segment(part, cwd)
+        if reason and not (reason.startswith('printing') and _captured(cmd, max(start, 0))):
+            return reason
     return None
 
 
 # --- dispatch ------------------------------------------------------------------------------
 
-def check(tool, ti):
+def check(tool, ti, cwd=None):
     if tool in ('Write', 'Edit', 'MultiEdit', 'NotebookEdit'):
         parts = [ti.get('content'), ti.get('new_string'), ti.get('new_source')]
         edits = ti.get('edits')
@@ -175,11 +250,11 @@ def check(tool, ti):
         return scan_content('\n'.join(p for p in parts if isinstance(p, str)))
     if tool in ('Read', 'Grep', 'Glob'):
         for key in ('file_path', 'path'):
-            if is_secret_path(ti.get(key)):
+            if is_secret_path(ti.get(key), cwd):
                 return 'reading a secret file'
         return None
     if tool == 'Bash':
-        return scan_bash(ti.get('command'))
+        return scan_bash(ti.get('command'), cwd)
     return None
 
 
@@ -189,7 +264,8 @@ def main():
         ti = data.get('tool_input') or {}
         if not isinstance(ti, dict):
             return 0
-        reason = check(data.get('tool_name') or '', ti)
+        cwd = data.get('cwd') if isinstance(data.get('cwd'), str) else None
+        reason = check(data.get('tool_name') or '', ti, cwd)
     except Exception:
         return 0
     if reason:

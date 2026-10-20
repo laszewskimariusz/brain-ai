@@ -142,7 +142,8 @@ def test_allows_shell_that_does_not_print_secret_files():
 
 
 def test_still_blocks_printing_key_files():
-    for cmd in ["cat certs/server.pem", "cat tls.key", "declare -p"]:
+    # *.key files are judged by content: see test_protected_paths
+    for cmd in ["cat certs/server.pem","declare -p"]:
         assert blocks(ev("Bash", command=cmd)), cmd
 
 
