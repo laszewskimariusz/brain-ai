@@ -66,6 +66,7 @@ Then set the project up:
 It writes `CLAUDE.md` and `.claude/settings.json` (template: [project-kit/](project-kit/)). For the shared core, copy [brain-template/](brain-template/) into its own repo and list your projects in `portfolio.yaml`:
 
 ```
+pip install pyyaml
 python3 scripts/portfolio_status.py brain-template/portfolio.yaml
 ```
 

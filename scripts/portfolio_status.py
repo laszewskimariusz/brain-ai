@@ -3,11 +3,15 @@
 
 For each project: stage, the latest commit on the remote (git ls-remote) and the HTTP status
 of its production URL. Network failures become statuses; the script never raises on them.
+Checks run in parallel under one overall deadline; git never prompts for credentials.
 
 Usage: python3 scripts/portfolio_status.py [path/to/portfolio.yaml]
 """
+import concurrent.futures
+import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -21,7 +25,8 @@ def load(path):
 
 def check_repo(url):
     try:
-        r = subprocess.run(["git", "ls-remote", url, "HEAD"], capture_output=True, text=True, timeout=20)
+        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": "ssh -o BatchMode=yes"}
+        r = subprocess.run(["git", "ls-remote", url, "HEAD"], capture_output=True, text=True, timeout=20, env=env)
     except (OSError, subprocess.TimeoutExpired):
         return "unreachable"
     if r.returncode != 0 or not r.stdout.strip():
@@ -29,13 +34,21 @@ def check_repo(url):
     return r.stdout.split()[0][:7]
 
 
+def _status(url, method, timeout):
+    req = urllib.request.Request(url, method=method, headers={"User-Agent": "portfolio-status"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
 def check_http(url, timeout=10):
     try:
-        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "portfolio-status"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return str(resp.status)
-    except urllib.error.HTTPError as e:
-        return str(e.code)
+        code = _status(url, "HEAD", timeout)
+        if code in (405, 501):  # some servers refuse HEAD
+            code = _status(url, "GET", timeout)
+        return str(code)
     except (urllib.error.URLError, OSError, ValueError):
         return "down"
 
@@ -47,12 +60,35 @@ def _safe(fn, arg):
         return "error"
 
 
-def rows(projects, repo_check=check_repo, http_check=check_http):
-    out = []
+def rows(projects, repo_check=check_repo, http_check=check_http, deadline=60):
+    """One row per project. Checks run in parallel; anything unfinished at the deadline is 'timeout'."""
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+    jobs = []
     for p in projects:
-        repo = _safe(repo_check, p["repo"]) if p.get("repo") else "-"
-        http = _safe(http_check, p["url"]) if p.get("url") else "-"
-        out.append((p.get("slug", "?"), p.get("stage", "?"), repo, http))
+        if not isinstance(p, dict):
+            jobs.append(None)
+            continue
+        repo = pool.submit(_safe, repo_check, p["repo"]) if p.get("repo") else None
+        http = pool.submit(_safe, http_check, p["url"]) if p.get("url") else None
+        jobs.append((p, repo, http))
+    end = time.monotonic() + deadline
+
+    def result(future):
+        if future is None:
+            return "-"
+        try:
+            return future.result(timeout=max(0, end - time.monotonic()))
+        except concurrent.futures.TimeoutError:
+            return "timeout"
+
+    out = []
+    for job in jobs:
+        if job is None:
+            out.append(("?", "invalid", "-", "-"))
+        else:
+            p, repo, http = job
+            out.append((p.get("slug", "?"), p.get("stage", "?"), result(repo), result(http)))
+    pool.shutdown(wait=False, cancel_futures=True)
     return out
 
 
