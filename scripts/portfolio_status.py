@@ -9,6 +9,7 @@ Usage: python3 scripts/portfolio_status.py [path/to/portfolio.yaml]
 """
 import concurrent.futures
 import os
+import re
 import subprocess
 import sys
 import time
@@ -23,10 +24,16 @@ def load(path):
         return (yaml.safe_load(f) or {}).get("projects") or []
 
 
+_REPO = re.compile(r'^(?:https?://|ssh://|git://|file://|git@[\w.-]+:|/|\.{1,2}/|[\w.-]+/)')
+
+
 def check_repo(url):
+    # a value from the YAML must not become a git option (--upload-pack=...) or transport (ext::)
+    if not isinstance(url, str) or url.startswith('-') or '::' in url or not _REPO.match(url):
+        return "invalid"
     try:
         env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": "ssh -o BatchMode=yes"}
-        r = subprocess.run(["git", "ls-remote", url, "HEAD"], capture_output=True, text=True, timeout=20, env=env)
+        r = subprocess.run(["git", "ls-remote", "--", url, "HEAD"], capture_output=True, text=True, timeout=20, env=env)
     except (OSError, subprocess.TimeoutExpired):
         return "unreachable"
     if r.returncode != 0 or not r.stdout.strip():
@@ -44,6 +51,8 @@ def _status(url, method, timeout):
 
 
 def check_http(url, timeout=10):
+    if not isinstance(url, str) or not re.match(r'(?i)^https?://', url):
+        return "invalid"
     try:
         code = _status(url, "HEAD", timeout)
         if code in (405, 501):  # some servers refuse HEAD

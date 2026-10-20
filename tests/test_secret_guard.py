@@ -194,3 +194,34 @@ def test_blocks_more_url_credential_shapes():
 def test_url_without_credentials_still_passes():
     for c in ["redis://cache.example.com:6379", "mongodb+srv://cluster0.example.net/db", "url = 'redis://:${REDIS_PASS}@cache'"]:
         assert run(ev("Write", file_path="/repo/config.ts", content=c))[0] == 0, c
+
+
+# --- security review of v4.0.1 ------------------------------------------------------------
+
+def test_scanning_large_content_is_fast_enough_for_the_hook_timeout():
+    import time
+    for content in ["ab_" * 40000, "a_" * 60000, "x" * 300000, ("word " * 20000) + f"{KEYNAME}={FAKE}"]:
+        t = time.monotonic()
+        code, _ = run(ev("Write", file_path="/repo/big.txt", content=content))
+        assert time.monotonic() - t < 2.0, len(content)
+    # a secret after a long run is still found
+    assert blocks(ev("Write", file_path="/repo/big.txt", content="ab_" * 40000 + f"\n{KEYNAME}={FAKE}"))
+
+
+def test_deeply_nested_input_does_not_crash_the_hook():
+    code, err = run("[" * 200000)
+    assert code == 0 and "Traceback" not in err
+
+
+def test_key_sniff_does_not_hang_on_a_fifo(tmp_path):
+    import time
+    os.mkfifo(tmp_path / "x.key")
+    t = time.monotonic()
+    run(ev("Read", file_path=str(tmp_path / "x.key")))
+    assert time.monotonic() - t < 2.0
+
+
+def test_key_marker_after_the_first_4k_is_still_found(tmp_path):
+    key = tmp_path / "big.key"
+    key.write_text("# comment\n" * 600 + "-----BEGIN " + "PRIVATE KEY-----\n")
+    assert blocks(ev("Read", file_path=str(key)))

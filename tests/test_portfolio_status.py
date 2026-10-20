@@ -107,3 +107,23 @@ def test_brain_template_says_where_the_status_script_lives():
     t = (ROOT / "brain-template/CLAUDE.md").read_text()
     assert "from a clone of brain-ai" in t
     assert "pip install pyyaml" in (ROOT / "README.md").read_text()
+
+
+def test_repo_and_url_values_cannot_inject_options_or_schemes(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(ps.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    for bad in ["--upload-pack=touch " + str(tmp_path / "pwned"), "-oProxyCommand=x", "ext::sh -c x"]:
+        assert ps.check_repo(bad) == "invalid"
+    assert calls == []
+    for bad in ["file:///etc/hostname", "ftp://example.com/x", "gopher://x"]:
+        assert ps.check_http(bad) == "invalid"
+
+
+def test_git_gets_an_end_of_options_marker(monkeypatch):
+    seen = []
+
+    class R:
+        returncode, stdout = 0, "a1b2c3d4e5\tHEAD\n"
+    monkeypatch.setattr(ps.subprocess, "run", lambda cmd, **kw: seen.append(cmd) or R())
+    assert ps.check_repo("https://example.com/a.git") == "a1b2c3d"
+    assert seen[0][:3] == ["git", "ls-remote", "--"]

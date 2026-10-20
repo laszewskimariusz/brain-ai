@@ -26,13 +26,14 @@ import json
 import os
 import re
 import shlex
+import stat
 import sys
 
 # --- file contents -------------------------------------------------------------------------
 
 _KEYWORD = r'(?:api[_-]?key|apikey|secret(?:[_-]?key)?|client[_-]?secret|access[_-]?token|auth[_-]?token|token|password|passwd|pwd)'
 _ASSIGN = re.compile(
-    r'(?i)(?<![A-Za-z0-9])[A-Za-z0-9_]*?' + _KEYWORD + r'["\']?\s*[:=]\s*(["\'`]?)([^\s"\'`,;)}\]]*)'
+    r'(?i)(?<![A-Za-z0-9_])[A-Za-z0-9_]{0,64}?' + _KEYWORD + r'["\']?\s*[:=]\s*(["\'`]?)([^\s"\'`,;)}\]]*)'
 )
 _REFERENCE = re.compile(r'^(?:<|\$|env\.|process\.env|os\.environ|import\.meta\.env|getenv)')
 _PLACEHOLDER = re.compile(r'(?i)(your|change|example|xxx|placeholder|dummy|sample|fake|redacted|replace|todo|\.\.\.|\*\*\*)')
@@ -119,9 +120,13 @@ def _extra_globs():
 
 def _holds_private_key(path, cwd):
     """*.key is also the extension of ordinary text files: block only a file that holds a key."""
+    full = os.path.join(cwd or os.getcwd(), os.path.expanduser(path))
     try:
-        with open(os.path.join(cwd or os.getcwd(), os.path.expanduser(path)), 'rb') as f:
-            return b'PRIVATE KEY' in f.read(4096)
+        if not stat.S_ISREG(os.stat(full).st_mode):
+            return False  # FIFOs and devices would hang the hook
+        fd = os.open(full, os.O_RDONLY | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as f:
+            return b'PRIVATE KEY' in f.read(65536)
     except OSError:
         return False  # nothing there to leak
 
@@ -511,7 +516,7 @@ def _decide(data):
 def main():
     try:
         data = json.loads(sys.stdin.read())
-    except (ValueError, OSError, UnicodeDecodeError):
+    except Exception:  # not JSON, not text, nested too deep
         data = None
     if not isinstance(data, dict):
         code, msg = 0, 'secret_guard (brain-core): unreadable hook input, allowed without a check'
