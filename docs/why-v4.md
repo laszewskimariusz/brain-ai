@@ -14,7 +14,7 @@ v3 grew by addition: more personas, more indexes, more hooks. Before planning v4
 → *Removed the manifest, index and generator. Plain files and `grep`.*
 
 **Instructions are not enforcement.** A hook that checked frontmatter format blocked 0 writes. The secret guard blocked 8.
-→ *Keep the guard, drop the format hook. Guarantees come from hooks and `permissions.deny`, and the guard ships inside the plugin so every agent gets it.*
+→ *Keep the guard, drop the format hook. Enforcement comes from the sandbox, `permissions.deny` and hooks, and the guard ships inside the plugin so every agent gets it.*
 
 **Nobody worked inside project repos.** 0 sessions started in a project repo; all work began in the brain or the home directory, so every session loaded the brain's context.
 → *Each project gets its own kit and its own sessions. The brain coordinates.*

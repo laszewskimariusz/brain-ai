@@ -39,6 +39,7 @@
     ]
   },
   "sandbox": {
+    "enabled": true,
     "filesystem": {
       "denyRead": [
         "./**/.env",

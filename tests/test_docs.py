@@ -39,3 +39,12 @@ def test_docs_do_not_promise_per_project_pinning_the_kit_does_not_do():
     claim = re.compile(r"(?i)pinned per project|pins a release|pinned version|pin a release|pinned plugin")
     for d in DOCS:
         assert not claim.search((ROOT / d).read_text()), d
+
+
+def test_docs_describe_the_layers_with_the_sandbox_as_the_boundary():
+    layers = re.compile(r"sandbox[^\n]*→[^\n]*permissions\.deny[^\n]*→[^\n]*hook", re.I)
+    for d in ("README.md", "docs/architecture.md"):
+        t = (ROOT / d).read_text()
+        assert layers.search(t), d
+        # the hook is a seat belt, not the boundary
+        assert not re.search(r"(?i)guarantees come from[^\n]*hooks", t), d

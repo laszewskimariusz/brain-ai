@@ -85,7 +85,7 @@ Skills load on demand: `spec` (interview → spec), `test-plan`, `docs`, `projec
 
 Always-on cost of the whole plugin: **~580 tokens per session** (`claude plugin details brain-core@brain-ai`); an agent or skill body loads only when it fires.
 
-The **secret guard** is a `PreToolUse` hook. It blocks writing literal secrets and known token shapes, reading `.env`/key files and dumping the environment — and never echoes the value it caught. It runs at plugin level, so every agent gets it.
+The **secret guard** is a `PreToolUse` hook. It blocks writing literal secrets and known token shapes, reading `.env`/key files, copying them out and dumping the environment — and never echoes the value it caught. It runs at plugin level, so every agent gets it. It is a seat belt against honest mistakes, not the boundary: see [Security](#security).
 
 ## Repository layout
 
@@ -108,7 +108,8 @@ tests/                            pytest: manifests, agents, skills, secret guar
 ## Security
 
 - Secrets never live in files: settings and docs hold key names only; values are read into a variable at runtime.
-- Guarantees come from `permissions.deny` and hooks, not from instructions in prompts.
+- Layers, strongest first: Bash sandbox (enforced by the OS) → `permissions.deny` (Claude's file tools) → secret guard hook (seat belt). The project kit turns the sandbox on and gives the sandbox and `permissions.deny` the same protected-path list the hook uses. Instructions in prompts enforce nothing.
+- The sandbox covers shell commands only, and needs `bubblewrap` and `socat` on Linux; without them Claude Code runs commands unsandboxed, so install them (or set `sandbox.failIfUnavailable`).
 - Every push runs the tests, a private-pattern scan of the tree and history, and gitleaks.
 
 ## Limits

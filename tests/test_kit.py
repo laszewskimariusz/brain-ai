@@ -42,3 +42,9 @@ def test_portfolio_entries_have_required_fields():
     for p in projects:
         assert {"slug", "name", "stage", "repo"} <= p.keys(), p
         assert p["stage"] in stages, p
+
+
+def test_project_kit_turns_the_bash_sandbox_on():
+    cfg = json.loads((KIT / ".claude/settings.json").read_text())
+    assert cfg["sandbox"]["enabled"] is True
+    assert cfg["sandbox"]["filesystem"]["denyRead"]
