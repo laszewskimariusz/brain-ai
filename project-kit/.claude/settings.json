@@ -1,0 +1,23 @@
+{
+  "extraKnownMarketplaces": {
+    "brain-ai": {
+      "source": {
+        "source": "github",
+        "repo": "laszewskimariusz/brain-ai"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "brain-core@brain-ai": true
+  },
+  "permissions": {
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.*.local)",
+      "Read(**/.secrets)",
+      "Read(**/*.pem)",
+      "Bash(env)",
+      "Bash(printenv*)"
+    ]
+  }
+}

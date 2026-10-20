@@ -1,0 +1,27 @@
+name: ci
+on:
+  pull_request:
+  push: { branches: [master] }
+permissions: { contents: read, pull-requests: read }
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pytest pyyaml
+      - run: python -m pytest -q tests
+      - run: bash tests/guard/guard.test.sh
+        env: { GUARD_SKIP_GITLEAKS: "1" }
+      - name: forbidden strings (tree + history since v3)
+        # Fork PRs get no secrets; the guard runs again on master after merge.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: bash scripts/guard.sh
+        env:
+          GUARD_SKIP_GITLEAKS: "1"
+          GUARD_HISTORY_SINCE: v3.0.0
+          GUARD_PRIVATE_PATTERNS: ${{ secrets.GUARD_PRIVATE_PATTERNS }}
+      - uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }

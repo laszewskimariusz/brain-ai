@@ -1,12 +1,8 @@
-Ai-Brain-Open
-Copyright 2026 Mariusz Laszewski / Zatto Software
+brain-ai
+Copyright 2026 Mariusz Laszewski
 
 This product includes software developed at Zatto Software (https://zatto.dev).
 
-The agent definitions in `agents/` are designed for use with Anthropic's
-Claude Code (https://claude.ai/code). "Claude" and "Claude Code" are
+The agents, skills and hooks in `plugins/brain-core/` are designed for use with
+Anthropic's Claude Code (https://claude.ai/code). "Claude" and "Claude Code" are
 trademarks of Anthropic, PBC.
-
-Original agent personalities (Borys, Atlas, Daga, Teo, Rena, Straz, Pixel,
-Olek, Sowa, Nika, Klio) were developed for the internal Zatto AI team and
-are released under Apache 2.0 for community reuse.

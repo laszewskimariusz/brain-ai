@@ -1,299 +1,122 @@
-# Ai-Brain-Open
+# brain-ai
 
-<p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
-  <a href="https://github.com/agentsmd/agents.md"><img src="https://img.shields.io/badge/AGENTS.md-v1.2-blue.svg" alt="AGENTS.md v1.2"></a>
-  <a href="./KMF.md"><img src="https://img.shields.io/badge/KMF-v1-orange.svg" alt="KMF v1"></a>
-  <a href="https://claude.ai/code"><img src="https://img.shields.io/badge/Claude%20Code-compatible-7C3AED.svg?logo=anthropic&logoColor=white" alt="Claude Code"></a>
-  <a href="https://developers.openai.com/codex/guides/agents-md"><img src="https://img.shields.io/badge/Codex-compatible-10A37F.svg?logo=openai&logoColor=white" alt="Codex"></a>
-  <a href="https://cursor.com"><img src="https://img.shields.io/badge/Cursor-compatible-1F2937.svg" alt="Cursor"></a>
-  <a href="https://github.com/features/copilot"><img src="https://img.shields.io/badge/Copilot-compatible-2DA44E.svg?logo=github&logoColor=white" alt="GitHub Copilot"></a>
-</p>
+A shared knowledge core, a project kit and a Claude Code plugin marketplace for running software projects with a small team of AI agents. Version 4 is a rewrite driven by 60 days of usage data.
 
-<p align="center">
-  <a href="https://github.com/Zatto-Software/brain-ai"><img src="https://img.shields.io/badge/GitHub%20Mirror-Zatto--Software%2Fbrain--ai-181717.svg?logo=github&logoColor=white" alt="GitHub Mirror"></a>
-  <a href="https://zatto.dev"><img src="https://img.shields.io/badge/Built%20at-zatto.dev-blueviolet.svg" alt="Built at zatto.dev"></a>
-  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs welcome">
-</p>
+> Looking for the earlier file-based framework with 19 agent personas? It lives at tag [`v3.0.0`](https://github.com/laszewskimariusz/brain-ai/tree/v3.0.0). Why it changed: [docs/why-v4.md](docs/why-v4.md).
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Memory-Karpathy%20Wiki-FF6B6B.svg" alt="Memory: Karpathy LLM Wiki">
-  <img src="https://img.shields.io/badge/Agents-19%20roles-4ECDC4.svg" alt="19 agent roles">
-  <img src="https://img.shields.io/badge/MCP-4%20servers-9B5DE5.svg" alt="4 MCP servers">
-  <img src="https://img.shields.io/badge/Token%20saving-~80%25-success.svg" alt="~80% token reduction">
-  <img src="https://img.shields.io/badge/Built%20with-%E2%9D%A4-red.svg" alt="Built with love">
-</p>
+## v3 → v4 in numbers
 
-A practical, file-based memory system and multi-agent framework for [Claude Code](https://claude.ai/code) — production-tested at [zatto.dev](https://zatto.dev).
+Measured over 60 days of real work (110 main sessions, 553 subagent runs):
 
-> **Why this exists:** Claude Code's built-in memory works, but without convention it bloats fast. Files duplicate, descriptions creep past 150 chars, stale data lingers, and every turn loads more tokens than it should. This repo is the framework we built to keep our `AI-Brain` lean while scaling to a multi-agent team.
+| Finding | Decision in v4 |
+|---|---|
+| Subagents caused **80 %** of cache-creation tokens and **76 %** of output tokens; most calls inherited the most expensive model | every agent pins its model; only the architect runs on the strongest one |
+| **6 of 18** agent personas were never called | 7 role agents, no personas ([persona prompts do not improve results](https://arxiv.org/abs/2311.10054)) |
+| A custom manifest and search index were read **~28 times** in 60 days, regenerated **~44 times** | removed; plain files and `grep` |
+| A frontmatter-format hook blocked **0** writes; the secret guard blocked **8** real leaks | keep only guards that bite, ship them in the plugin |
+| **0** sessions started inside a project repo | each project gets its own kit; the brain only coordinates |
+| Agents were copied between machines and drifted apart | one versioned plugin installed from one marketplace |
 
-## What's here
+Result of the slimming: context loaded at session start went from **81k to 40k tokens (−50 %)**.
 
-| Folder / file | Contents |
-|--------|----------|
-| [`agents/`](agents/) | **19 specialized subagents** (13 base: developer, architect, DBA, QA, reviewer, security, designer, devops, observability, researcher, analyst, writer, recruiter; **+5 v3:** memory curator, QMS lead auditor, ISMS lead auditor, token economist (placeholder), external deep auditor) with safety rails + shared patterns + **progressive-disclosure SKILL/REFERENCE split** |
-| [`docs/`](docs/) | Architecture (incl. **L1-L4 brain-search**), memory types (incl. **Karpathy 3-layer**), lifecycle (incl. **subagent O/CT/OF/TG/TB/SC pattern**), conflict detection, token budget (incl. **`/token-budget` flow**), **KMF guide**, **Obsidian graph setup**, **Caveman integration**, **MCP servers**, **progressive disclosure**, **19-agent table** |
-| [`templates/`](templates/) | Drop-in `.tmpl` files: `MEMORY.md`, `INDEX.md`, memory entries, agent SKILL, **CLAUDE.md (top + subfolder)**, **manifest.json**, **infra.json** |
-| [`hooks/`](hooks/) | Shell hooks: post-memory-write conflict scan, session-start health check, memory rotation, **PreToolUse `hook-kmf-check.py` frontmatter enforcement** |
-| [`slash-commands/`](slash-commands/) | `/brain-status`, `/brain-rotate`, `/brain-conflict`, **`/consolidate-daily`**, **`/token-budget`**, **`/subagent-launch`** |
-| [`scripts/`](scripts/) | `regen-manifest.py` (builds `manifest.json` + `infra.json` + **`_search.json` FTS index**), **`memory-lint.py`** (orphans/stale/dupes/daily-edits/missing-fm), **`token-budget.py`** (ccusage wrapper), **`consolidate.py`** (daily → topics scaffold) |
-| [`examples/`](examples/) | Sanitized real example + [orchestrator-prompt template](examples/orchestrator-prompt.md) |
-| [`KMF.md`](KMF.md) | **Knowledge Memory Format spec** — typed frontmatter + section schema + symbol shorthand for token-efficient memory |
-
-## Core ideas
-
-### 1. Three layers of persistence
-- **Index layer** — `MEMORY.md` (~30 lines, loaded every turn). Shortlinks only. Hard cap: 80 chars per line.
-- **File layer** — one memory per file (`feedback_*`, `project_*`, `reference_*`, `user_*`). Loaded on demand.
-- **Archive layer** — `Decisions/` (ADRs). Closed projects move here; out of `MEMORY.md`.
-
-### 2. Four memory types
-- `user` — who the user is, how they work, preferences
-- `feedback` — corrections AND validated approaches; rule + **Why** + **How to apply**
-- `project` — in-flight work, motivations, deadlines (high decay)
-- `reference` — pointers to external systems and durable lookups
-
-### 3. Flat lookup before grep
-A single `INDEX.md` (≤100 lines) replaces 10 greps for IPs/ports/services. Update on infra change. Keeps "where is X?" queries to one read.
-
-### 4. Lifecycle = write → update → archive
-Closed projects don't sit in `MEMORY.md` forever. Pattern: when `project_*` ticks all boxes → ADR in `Decisions/` → entry removed from index.
-
-### 5. Conflict detection over duplication
-Three files describing the same service is the failure mode that costs the most tokens AND causes wrong recommendations. The hooks scan for it.
-
-### 6. KMF — typed frontmatter + section schema
-Once your brain has 50+ files, plain markdown stops scaling. KMF gives every file typed frontmatter (`id`, `type`, `v`, `tags`, `refs`), enforces a small set of H2 sections per type (e.g. `## ROLE / STACK / RULES / REFS` for agents), and uses symbol shorthand (`→`, `@`, `>`, `!`). A `regen-manifest.py` script then builds a single `manifest.json` covering the whole brain — one read replaces dozens of greps. See [`KMF.md`](KMF.md) and [`docs/kmf.md`](docs/kmf.md).
-
-### 7. Per-folder `CLAUDE.md`
-Claude Code auto-loads `CLAUDE.md` from the working directory and parents. Drop a 20-line `CLAUDE.md` into each brain subfolder (`Agents/`, `Decisions/`, `Knowledge/`, ...) telling the coordinator where to look first in that folder. Free context, picked up automatically. See [`templates/CLAUDE.md.subfolder.tmpl`](templates/CLAUDE.md.subfolder.tmpl).
-
-### 8. Per-agent model routing
-Each agent declares `model:` in its `SKILL.md` frontmatter. Architects → `opus` (slow, expensive, smart). Developers → `sonnet` (fast, cheap, competent). Writers → `haiku` (cheapest). ~70% of work doesn't need `opus` — and now we measure it (see Observability below).
-
-### 9. Skills auto-load — zero token cost when not triggered
-Claude Code's [Agent Skills](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview) load only when their `description:` matches the task. We curate a set per agent role instead of dumping everything into the system prompt.
-
-## Recommended skill set (production-tested)
-
-These are the [Anthropic Agent Skills](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview) we wire into agents. Drop them into `~/.claude/skills/` and they activate automatically by description match.
-
-| Category | Skill | Source | Triggers when… |
-|----------|-------|--------|----------------|
-| Engineering | `systematic-debugging` | [obra/superpowers](https://github.com/obra/superpowers) | a bug, test failure, or unexpected behavior shows up |
-| Engineering | `verification-before-completion` | [obra/superpowers](https://github.com/obra/superpowers) | the agent is about to claim "done" / "fixed" / "passing" |
-| Engineering | `using-git-worktrees` | [obra/superpowers](https://github.com/obra/superpowers) | feature work needs isolation from current workspace |
-| UI / Frontend | `frontend-design` | [anthropics/skills](https://github.com/anthropics/skills) | building UI, design system, or styling work |
-| UI / Frontend | `webapp-testing` | [anthropics/skills](https://github.com/anthropics/skills) | browser-based e2e / smoke tests via Playwright |
-| Docs | `pdf`, `docx`, `xlsx` | [anthropics/skills](https://github.com/anthropics/skills) | producing or extracting from those file formats |
-| Data & Observability | `dashboard-specification` | [nimrodfisher/data-analytics-skills](https://github.com/nimrodfisher/data-analytics-skills) | new dashboard or redesign — gather requirements first |
-| Data & Observability | `visualization-builder` | nimrodfisher | choosing chart type, color, layout |
-| Data & Observability | `query-validation` | nimrodfisher | SQL review before deploy |
-| Data & Observability | `time-series-analysis` | nimrodfisher | trends, anomalies, seasonality, forecasting |
-| Data & Observability | `metric-reconciliation` | nimrodfisher | two sources disagree — find the root cause |
-| Data & Observability | `root-cause-investigation` | nimrodfisher | spike, regression, on-call debug |
-
-`description:` quality matters more than skill count. A bad description triggers on the wrong tasks and wastes a load. Keep them under 150 chars and lead with the trigger ("Use when…").
-
-## Observability — measure, don't guess
-
-If you can't see what context loads on each turn, you can't optimize it.
-
-We added a self-observation layer: every Claude Code session writes JSONL transcripts; a sync script normalizes them into Postgres; Grafana renders cost-per-session, tokens-per-model, cache hit rate, and top-cost sessions.
+## How it fits together
 
 ```mermaid
 flowchart LR
-    JSONL["~/.claude/projects/**/*.jsonl"]
-    SYNC["sync script<br/>(incremental, idempotent)"]
-    EXP["Prometheus exporter<br/>(ccusage daily)"]
-    PG[("Postgres")]
-    PROM["Prometheus"]
-    GRAF["Grafana"]
-
-    JSONL --> SYNC
-    JSONL -.-> EXP
-    SYNC --> PG
-    PG --> GRAF
-    EXP --> PROM
-    PROM --> GRAF
+  subgraph Brain["Brain repo (shared core)"]
+    P[portfolio.yaml]
+    D[decisions/]
+    K[knowledge/]
+    I[infra/]
+  end
+  subgraph MP["brain-ai marketplace (this repo)"]
+    C["brain-core plugin<br/>7 agents · 4 skills · secret guard"]
+  end
+  subgraph Projects["Project repos"]
+    A["app-one<br/>CLAUDE.md + .claude/settings.json"]
+    B["app-two<br/>CLAUDE.md + .claude/settings.json"]
+  end
+  Brain -- "coordinates, tracks" --> Projects
+  MP -- "plugin" --> A
+  MP -- "plugin" --> B
 ```
 
-![](docs/images/pixel-demo/04-observability-pipeline.jpeg)
+- **Brain** — what is shared across projects: infrastructure, decisions, research, the portfolio. Small `CLAUDE.md` (< 2 KB), no project code.
+- **Project repos** — code plus a kit: a short `CLAUDE.md` and `.claude/settings.json` that enables the plugin and denies secret reads.
+- **Marketplace** — agents, skills and guards ship as one versioned Claude Code plugin instead of files copied around.
+- **Two machines** — a coordinator session plans and tracks; heavy builds, tests and parallel agents run on a separate build machine.
 
-What this unlocks:
-- **Per-agent cost slicing** — which `SKILL.md` actually pays back its `opus` routing
-- **Cache hit rate** — instantly tells you when `MEMORY.md` index drift is hurting
-- **Session distribution** — find the long-tail expensive sessions before they become a habit
-
-The tooling (sync script, exporter, dashboard JSON) lives in our private mirror. We'll publish a sanitized version after first community feedback — open an issue if you want it sooner.
-
-## Token budget — what loading "memory" actually costs
-
-| Layer | Loaded when | Typical size |
-|-------|-------------|--------------|
-| `CLAUDE.md` (global) | Every turn | 30–60 lines (~500–1500 tok) |
-| `MEMORY.md` index | Every turn | ≤30 lines (~600 tok) |
-| Individual memory file | On grep / on relevance | 30–60 lines each |
-| Agent `SKILL.md` | On delegation only | Compress to ~100 lines |
-| Skill (Anthropic) | On description match | 0 when idle, 1–3K when fired |
-| `INDEX.md` (lookup) | On `Read` only | ≤100 lines |
-
-**Worst case we observed pre-optimization:** ~6K input tokens per turn just for memory boilerplate. After applying this framework: **~2K** — a sustained ~70% reduction. See [`docs/token-budget.md`](docs/token-budget.md).
-
-## The 19-agent team
-
-A coordinator (the main Claude session) routes work through nineteen specialized subagents. Each one carries an explicit scope, a `tools:` allowlist, a model recommendation, and shared safety rails so it can't accidentally drop your production database, leak a secret, or force-push to main. Full table + pipelines: [`docs/agents-19.md`](docs/agents-19.md).
-
-The roster splits into 13 base roles + 5 v3 additions + 1 external CLI:
-
-```
-Base (13):   atlas-architect borys-developer daga-dba teo-qa rena-reviewer
-             straz-security  pixel-designer  olek-devops sowa-researcher
-             nika-analyst    klio-writer     graffy-observability
-             hire-recruiter
-v3 (+5):     bibliotekarz-curator (Karpathy 3-layer memory)
-             iso-quincy           (ISO 9001 QMS Lead Auditor)
-             twoseven-isms        (ISO/IEC 27001 ISMS Lead Auditor)
-             kompresor-economist  (token economy — planned, placeholder)
-             gemini-auditor       (external CLI for deep parallel sweeps)
-```
-
-Standard pipelines:
-
-```
-Feature       nika → atlas → borys → teo → rena → olek
-Bug           borys → teo → rena
-Research      sowa → atlas (ADR)
-Security      straz (audit) → borys (fix) → straz (verify)
-Quality (QMS) iso-quincy → rena → teo
-ISMS audit    twoseven-isms → straz | olek | daga | borys → rena → twoseven (closure)
-Dashboard     atlas → graffy → borys → olek → teo
-Memory curate bibliotekarz (daily → topics consolidate + lint)
-Token audit   kompresor (monthly cron when implemented)
-Deep audit    gemini (external) → straz | daga | atlas | borys → rena
-```
-
-Safety: every agent reads [`agents/_shared/SAFETY.md`](agents/_shared/SAFETY.md). Tier 1 actions (force-push to main, drop prod tables, exfiltrate secrets) are PROHIBITED. Tier 2 (prod deploys, schema migrations, paid API calls) require explicit human approval before execution.
-
-### Progressive disclosure — SKILL.md ≤100 lines + REFERENCE.md
-
-All base agents and the two new ISO auditors follow a two-file pattern: a short `SKILL.md` (decision-grade — when to invoke, rules, output schema) and a deeper `REFERENCE.md` (execution-grade — methods, snippets, templates). Cuts per-delegation cost ~50%. See [`docs/progressive-disclosure.md`](docs/progressive-disclosure.md).
-
-## What's new in v3
-
-- **+5 agents** (12 → 19 roles total), with progressive-disclosure SKILL+REFERENCE split applied across the board
-- **Karpathy 3-layer memory wiki** formalized (daily → topics → index) with `consolidate.py` + `memory-lint.py` scripts and the `bibliotekarz-curator` agent that owns the layer
-- **L1-L4 brain-search architecture** — `_meta.json` (hot) + `_search.json` (FTS-ready, generated by `regen-manifest.py`) + ripgrep (fallback) + Basic Memory MCP (Phase 2, semantic). Decision rationale: [`docs/architecture.md`](docs/architecture.md#l1-l4-brain-search-architecture-v3)
-- **Subagent delegation template** — six-field O/CT/OF/TG/TB/SC pattern that eliminates vague "fix the bug in X" delegations. See [`agents/_shared/SUBAGENT_PROMPTS.md`](agents/_shared/SUBAGENT_PROMPTS.md)
-- **3 new slash commands** — `/consolidate-daily`, `/token-budget`, `/subagent-launch`
-- **PreToolUse `hook-kmf-check.py`** — blocks `Write` to tracked dirs without KMF frontmatter, warns on `Edit` (see [`hooks/hook-kmf-check.py`](hooks/hook-kmf-check.py))
-- **AGENTS.md v1.2** — cross-tool interop bumped for the new agent set
-- **4 MCP servers** integrated (basic-memory, serena, sequential-thinking, repomix) — see [`docs/mcp-servers.md`](docs/mcp-servers.md)
-
-## MCP servers — recommended set
-
-| MCP | Role | Where it shines |
-|-----|------|-----------------|
-| `basic-memory` | KMF-native memory (FTS5 + sqlite-vec) | "find notes similar to this", "what did we discuss about X" |
-| `serena` | LSP semantic code search (TS / Python) | "find every caller of `createUser`", refactor sweeps |
-| `sequential-thinking` | Branchable reasoning | ADR drafting, multi-option benchmark eval |
-| `repomix` | Tree-sitter codebase compression | bulk audits, external-repo recon |
-
-Zero token cost when idle. Full config + sketch: [`docs/mcp-servers.md`](docs/mcp-servers.md).
-
-## Showcase — Pixel now generates raster assets inline
-
-The `pixel-designer` agent ships with a new cross-cutting capability: while designing UI, it can generate raster assets (backgrounds, illustrations, mockups, patterns) inline through the [`nano-banana`](https://github.com/kingbootoshi/nano-banana-2-skill) CLI (Gemini 3 Flash by default, Pro on demand). Pixel decides for itself when a raster asset is needed and when SVG/CSS is the better choice, then enriches the prompt with the project's palette + mood + anti-AI-slop guards before calling the CLI.
-
-Three real outputs (Gemini 3 Flash, ~$0.10/image average), generated end-to-end through Pixel's enrichment pipeline:
-
-![Hero — neural network](docs/images/pixel-demo/01-hero-brain-network.jpeg)
-*Hero banner, 2K, 16:9 — `"abstract dark neural network, navy #0A1628 + slate #334155 + teal #14B8A6 accents, photorealistic, no AI art aesthetic, no gradient meshes"`*
-
-<table>
-<tr>
-<td width="55%"><img src="docs/images/pixel-demo/02-agent-team-isometric.jpeg" alt="Agent team — isometric"></td>
-<td width="45%"><b>Agent-team illustration</b>, 1K, 4:3 — twelve distinct geometric figures connected by teal accent lines, editorial minimal style. Generated with the same palette enrichment and anti-slop guards.</td>
-</tr>
-</table>
-
-![Pipeline — workflow flow](docs/images/pixel-demo/03-pipeline-flow.jpeg)
-*Pipeline visualization, 1K, 21:9 — five connected modules, panoramic widescreen, restrained editorial composition.*
-
-How Pixel triggers this in practice — full spec in [`agents/pixel-designer/SKILL.md`](agents/pixel-designer/SKILL.md#image-generation-nano-banana-cli--cross-cutting-capability) under *Image generation (Nano Banana CLI)*. Budget guardrails are enforceable (max 3 retries per task, Flash default, Pro reserved for hero/brand-critical, cost logged in every response). Pre-flight check refuses to run when `nano-banana` is missing or `$GEMINI_API_KEY` is not set.
+Details: [docs/architecture.md](docs/architecture.md).
 
 ## Quick start
 
-```bash
-# 1. Copy the templates into your AI-Brain folder
-cp -r templates/. ~/.claude/projects/<project>/memory/
+In Claude Code, inside any project:
 
-# 2. Install hooks
-cp hooks/*.sh ~/.claude/hooks/
-chmod +x ~/.claude/hooks/*.sh
-
-# 3. Register slash commands (in ~/.claude/settings.json)
-# See slash-commands/README.md
-
-# 4. Start your MEMORY.md with the template
-cp templates/MEMORY.md.tmpl ~/.claude/projects/<project>/memory/MEMORY.md
-
-# 5. Install the agent team (project-level OR user-level)
-cp -r agents/. .claude/agents/                     # project-level
-# or:
-cp -r agents/. ~/.claude/agents/                   # user-level
-
-# 6. Optional — adopt the orchestrator prompt as your CLAUDE.md
-cp examples/orchestrator-prompt.md ./CLAUDE.md     # then edit <COMPANY>/<PRODUCT>
-
-# 7. Optional — adopt KMF + the manifest workflow
-cp KMF.md <brain>/                                       # the format spec
-cp templates/CLAUDE.md.brain.tmpl <brain>/CLAUDE.md      # top-level coordinator hint
-cp templates/CLAUDE.md.subfolder.tmpl <brain>/Agents/CLAUDE.md
-cp -r scripts <brain>/                                   # manifest regen script
-python3 <brain>/scripts/regen-manifest.py                # generate manifest.json + infra.json
-
-# 8. Optional — caveman ecosystem (output / MCP / graph compression)
-# See docs/caveman-integration.md for the full menu. Minimal install:
-curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash
-
-# 9. Optional — wire up the recommended Anthropic Agent Skills
-git clone https://github.com/obra/superpowers /tmp/superpowers
-git clone https://github.com/anthropics/skills /tmp/anthropics-skills
-git clone https://github.com/nimrodfisher/data-analytics-skills /tmp/nfdata
-cp -r /tmp/superpowers/skills/{systematic-debugging,verification-before-completion,using-git-worktrees} ~/.claude/skills/
-cp -r /tmp/anthropics-skills/skills/{frontend-design,webapp-testing,pdf,docx,xlsx} ~/.claude/skills/
-cp -r /tmp/nfdata/skills/* ~/.claude/skills/
+```
+/plugin marketplace add laszewskimariusz/brain-ai
+/plugin install brain-core@brain-ai
 ```
 
-## What's new
+Then set the project up:
 
-- **2026-05 (v3)** — **+5 agents** (12 → 19 roles: `bibliotekarz-curator`, `iso-quincy`, `twoseven-isms`, `kompresor-economist` placeholder, `gemini-auditor` external). **Karpathy 3-layer memory** formalized + `consolidate.py` + `memory-lint.py`. **L1-L4 brain-search architecture** (ADR-008 style hybrid: manifest + `_search.json` FTS + ripgrep + Basic Memory MCP Phase 2). **Progressive-disclosure SKILL/REFERENCE split** across the team. **3 new slash commands** (`/consolidate-daily`, `/token-budget`, `/subagent-launch`). **PreToolUse `hook-kmf-check.py`** for frontmatter enforcement. **4 MCP servers** documented (basic-memory, serena, sequential-thinking, repomix). **AGENTS.md** bumped to v1.2.
-- **2026-05** — `hire-recruiter` agent added (designs new SKILL.md files based on real-world market research, not guesswork). `pixel-designer` extended with inline image generation via [`nano-banana`](https://github.com/kingbootoshi/nano-banana-2-skill) CLI (Gemini 3 Flash/Pro) — see Showcase. Per-agent model routing made measurable. Recommended skill set documented. Observability section added (Postgres + Grafana stack outline).
-- **2026-04** — Initial public release. Three-layer persistence, four memory types, flat-lookup `INDEX.md`, lifecycle hooks, conflict detection.
+```
+/brain-core:project-init
+```
 
-See [CHANGELOG.md](CHANGELOG.md) for the full log.
+It writes `CLAUDE.md` and `.claude/settings.json` (template: [project-kit/](project-kit/)). For the shared core, copy [brain-template/](brain-template/) into its own repo and list your projects in `portfolio.yaml`:
 
-## Status
+```
+python3 scripts/portfolio_status.py brain-template/portfolio.yaml
+```
 
-This framework is being extracted from a working private setup. The patterns here are battle-tested; tooling (hooks, slash commands, observability bridge) is in active development.
+## What is in the plugin
+
+| Agent | Model | Use it for |
+|---|---|---|
+| `architect` | opus | options with trade-offs, ADRs, data models, contracts |
+| `developer` | sonnet | features and fixes, test-first, evidence from test runs |
+| `reviewer` | sonnet | fresh-context review; read-only |
+| `security` | sonnet | OWASP, secrets, dependencies, third-party repos; read-only |
+| `devops` | sonnet | deploys, CI/CD, monitoring, rollbacks |
+| `designer` | sonnet | UI, accessibility, responsive layouts |
+| `researcher` | sonnet | primary-source research with citations; read-only |
+
+Skills load on demand: `spec` (interview → spec), `test-plan`, `docs`, `project-init`.
+
+Always-on cost of the whole plugin: **~580 tokens per session** (`claude plugin details brain-core@brain-ai`); an agent or skill body loads only when it fires.
+
+The **secret guard** is a `PreToolUse` hook. It blocks writing literal secrets and known token shapes, reading `.env`/key files and dumping the environment — and never echoes the value it caught. It runs at plugin level, so every agent gets it.
+
+## Repository layout
+
+```
+.claude-plugin/marketplace.json   marketplace "brain-ai"
+plugins/brain-core/               agents/ skills/ hooks/ .claude-plugin/plugin.json
+project-kit/                      CLAUDE.md + .claude/settings.json for a project
+brain-template/                   shared core: CLAUDE.md, portfolio.yaml, decisions/, knowledge/, infra/
+scripts/portfolio_status.py       latest commit + HTTP status for every project
+docs/                             why v4, architecture, ADR, migration from v3
+tests/                            pytest: manifests, agents, skills, secret guard, kit, docs
+```
+
+## Design decisions
+
+- [ADR 0001 — Brain core, projects apart, agents as plugins](docs/adr/0001-brain-core-projects-plugins.md)
+- [Why v4: the measurements](docs/why-v4.md)
+- [Migrating from v3](docs/migrating-from-v3.md)
+
+## Security
+
+- Secrets never live in files: settings and docs hold key names only; values are read into a variable at runtime.
+- Guarantees come from `permissions.deny` and hooks, not from instructions in prompts.
+- Every push runs the tests, a private-pattern scan of the tree and history, and gitleaks.
+
+## Limits
+
+- Built for a small team (one owner plus agents). Larger teams will want a real issue tracker integration and access control.
+- Agent prompts are tuned for Claude models; other harnesses read the skills but not the hooks.
+- The numbers above come from one team's usage, not a benchmark.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
-
-Apache 2.0 over MIT for the explicit patent grant + termination clause — relevant for AI tooling where patent risk is non-zero.
-
-## Credits
-
-Maintained by Mariusz Laszewski / [zatto.dev](https://zatto.dev).
-
-Open-sourced because every Claude Code user re-discovers the same memory hygiene and agent-coordination problems independently. Skip that step — fork what works, replace what doesn't.
-
-Inspirations and components we lean on:
-
-- [agentsmd/agents.md](https://github.com/agentsmd/agents.md) — `AGENTS.md` interop spec
-- [Andrej Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — self-maintaining knowledge base pattern
-- [Anthropic Agent Skills](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview) — `SKILL.md` spec
-- [obra/superpowers](https://github.com/obra/superpowers), [anthropics/skills](https://github.com/anthropics/skills), [nimrodfisher/data-analytics-skills](https://github.com/nimrodfisher/data-analytics-skills) — production skills we ship to agents
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

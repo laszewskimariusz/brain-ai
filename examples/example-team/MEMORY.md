@@ -1,6 +1,0 @@
-- [Polish-speaking user](user_role.md) — senior backend, prefers terse output
-- [No mocks in integration tests](feedback_no_mocks.md) — past prod incident from mocked DB
-- [No commits without tests](feedback_test_first.md) — TDD is default
-- [API gateway endpoints](reference_api_gateway.md) — base URLs and auth flow
-- [Postgres conventions](reference_postgres.md) — naming, migration tool, env var
-- [Q2 platform migration](project_q2_migration.md) — ECS → Fargate, deadline 2026-06-30
