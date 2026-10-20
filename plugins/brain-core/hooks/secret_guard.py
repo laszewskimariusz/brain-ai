@@ -18,7 +18,8 @@ Blocks:
   docker inspect without --format) unless captured into a variable; printing secret files;
   copying them out (cp source, scp, rsync, curl @file, tar, ...) or feeding them with "<".
 
-It never echoes the matched value. Malformed or unexpected input is allowed silently.
+It never echoes the matched value. Unreadable input is allowed with a one-line warning; an
+internal error while checking a covered tool blocks (fails closed).
 """
 import fnmatch
 import json
@@ -45,7 +46,7 @@ _TOKEN_SHAPES = [
     (re.compile(r'\bxox[abprs]-[A-Za-z0-9-]{10,}'), 'Slack token'),
 ]
 _BEARER = re.compile(r'(?i)Authorization:\s*Bearer\s+([A-Za-z0-9+/_\-=.]{20,})')
-_URL_CREDS = re.compile(r'://[^/\s:@"\']+:([^@\s/"\']+)@')
+_URL_CREDS = re.compile(r'://[^/\s:@"\']*:([^@\s/"\']+)@')  # user may be empty: redis://:pw@host
 
 
 def _is_literal_secret(value, next_char='', quoted=True):
@@ -384,29 +385,47 @@ def check(tool, ti, cwd=None):
     return None
 
 
-def main():
+_KNOWN_TOOLS = {'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Read', 'Grep', 'Glob', 'Bash'}
+_PREFIX = 'BLOCKED: blocked by secret_guard (brain-core): '
+
+
+def _decide(data):
+    """(exit code, message) for one hook event."""
+    ti = data.get('tool_input') or {}
+    tool = data.get('tool_name')
+    if not isinstance(tool, str) or not tool or not isinstance(ti, dict):
+        return 0, 'secret_guard (brain-core): unreadable hook input, allowed without a check'
+    if tool not in _KNOWN_TOOLS:
+        return 0, None
+    cwd = data.get('cwd') if isinstance(data.get('cwd'), str) else None
     try:
-        data = json.load(sys.stdin)
-        ti = data.get('tool_input') or {}
-        if not isinstance(ti, dict):
-            return 0
-        cwd = data.get('cwd') if isinstance(data.get('cwd'), str) else None
-        tool = data.get('tool_name') or ''
         reason = check(tool, ti, cwd)
-        if not reason and is_read_only_agent(data.get('agent_type')):
+        if reason:
+            return 2, (f'{_PREFIX}{reason}. '
+                       'Use an environment variable or a reference such as ${API_KEY} instead of the value.')
+        if is_read_only_agent(data.get('agent_type')):
             reason = check_read_only(tool, ti)
             if reason:
-                print(f'BLOCKED: blocked by secret_guard (brain-core): {reason} (read-only role). '
-                      'Report the change you would make; the developer agent applies it.', file=sys.stderr)
-                return 2
+                return 2, (f'{_PREFIX}{reason} (read-only role). '
+                           'Report the change you would make; the developer agent applies it.')
     except Exception:
-        return 0
-    if reason:
-        print(f'BLOCKED: blocked by secret_guard (brain-core): {reason}. '
-              'Use an environment variable or a reference such as ${API_KEY} instead of the value.',
-              file=sys.stderr)
-        return 2
-    return 0
+        # A bug in a scanner must not turn into a silent pass for a tool the guard covers.
+        return 2, f'{_PREFIX}internal error, failing closed. Retry differently or report a guard bug.'
+    return 0, None
+
+
+def main():
+    try:
+        data = json.loads(sys.stdin.read())
+    except (ValueError, OSError, UnicodeDecodeError):
+        data = None
+    if not isinstance(data, dict):
+        code, msg = 0, 'secret_guard (brain-core): unreadable hook input, allowed without a check'
+    else:
+        code, msg = _decide(data)
+    if msg:
+        print(msg, file=sys.stderr)
+    return code
 
 
 if __name__ == '__main__':
