@@ -1,0 +1,18 @@
+# One entry per project. Edited by hand; read by scripts/portfolio_status.py.
+projects:
+  - slug: invoice-app
+    name: Invoice app — small-business invoicing SaaS
+    stage: live            # idea | build | live | maintain | archived
+    repo: git@github.com:your-org/invoice-app.git
+    workdir: build-machine:~/work/invoice-app
+    url: https://invoice.example.com
+    deploy: container platform, deploys on tag
+    notes: Billing via a payment provider; secrets by key name only.
+  - slug: docs-site
+    name: Docs site — public documentation
+    stage: build
+    repo: git@github.com:your-org/docs-site.git
+    workdir: build-machine:~/work/docs-site
+    url: null
+    deploy: static hosting on push to main
+    notes: null

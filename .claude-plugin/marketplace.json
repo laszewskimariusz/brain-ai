@@ -1,0 +1,14 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "brain-ai",
+  "description": "brain-ai: role agents, process skills and a secret guard for Claude Code projects.",
+  "owner": { "name": "Mariusz Laszewski", "url": "https://github.com/laszewskimariusz" },
+  "plugins": [
+    {
+      "name": "brain-core",
+      "description": "Core: 7 role agents, 4 process skills, PreToolUse secret guard.",
+      "source": "./plugins/brain-core",
+      "category": "development"
+    }
+  ]
+}

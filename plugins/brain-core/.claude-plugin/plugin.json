@@ -1,0 +1,17 @@
+{
+  "name": "brain-core",
+  "description": "Role agents (architect, developer, reviewer, security, devops, designer, researcher), skills (spec, test-plan, docs, project-init) and a PreToolUse secret guard.",
+  "version": "4.0.0",
+  "author": { "name": "Mariusz Laszewski" },
+  "license": "Apache-2.0",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Read|Grep|Glob|Bash",
+        "hooks": [
+          { "type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/hooks/secret_guard.py\"", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}
